@@ -269,11 +269,22 @@ function parseArkSequentialText(text,anchorRows){
     return {...row,premium};
   });
 }
+function parseArkRowsByLayout(words,imageWidth,imageHeight){
+  const portrait=imageHeight>imageWidth,expected=portrait?ARK_SCREENSHOT_GROUPS[0]:ARK_SCREENSHOT_GROUPS[1];
+  const centers=portrait?expected.map((_,index)=>imageHeight*(.26+index*(.60/(expected.length-1)))):[imageHeight*.12,imageHeight*.43];
+  const normalized=words.map(word=>({...word,text:String(word.text||"").trim(),cx:(word.bbox.x0+word.bbox.x1)/2,cy:(word.bbox.y0+word.bbox.y1)/2}));
+  return expected.map((symbol,index)=>{
+    const top=index?((centers[index-1]+centers[index])/2):Math.max(0,centers[index]-(centers[1]-centers[0])*.5);
+    const bottom=index<centers.length-1?((centers[index]+centers[index+1])/2):Math.min(imageHeight,centers[index]+(centers[index]-centers[index-1])*.5);
+    const row=normalized.filter(word=>word.cy>=top&&word.cy<bottom);
+    const values=(min,max)=>row.filter(word=>word.cx>=imageWidth*min&&word.cx<imageWidth*max).map(word=>({value:cleanOcrNumber(word.text),text:word.text,cy:word.cy})).filter(item=>item.value!==null).sort((a,b)=>a.cy-b.cy);
+    const navValues=values(.34,.58),shareValues=values(.58,.80),capitalValues=values(.80,1.02),premium=navValues.find(item=>item.text.includes("%"))||navValues.find((item,i)=>i>0&&Math.abs(item.value)<=5);
+    return {symbol,name:ETF_NAME_BY_SYMBOL[symbol],nav:navValues[0]?.value??null,premium:premium?.value??null,arkShares:shareValues[0]?.value??null,positionCapital:capitalValues[0]?.value??null};
+  });
+}
 function recoverArkScreenshotRows(rows,imageWidth,imageHeight){
   const expected=imageHeight>imageWidth?ARK_SCREENSHOT_GROUPS[0]:ARK_SCREENSHOT_GROUPS[1];
   const recognized=new Map(rows.map(row=>[row.symbol,row]));
-  const recognizedExpected=expected.filter(symbol=>recognized.has(symbol)).length;
-  if(recognizedExpected<Math.max(1,expected.length-3)) return rows;
   return expected.map(symbol=>recognized.get(symbol)||{symbol,name:ETF_NAME_BY_SYMBOL[symbol],nav:null,premium:null,arkShares:null,positionCapital:null});
 }
 function recoverPremiumsByPosition(words,imageWidth,rows){
@@ -301,11 +312,12 @@ function mergeOcrRows(rows){
     return {...row,name:ETF_NAME_BY_SYMBOL[row.symbol]||row.name,nav:Number.isFinite(nav)?round(nav,2):null,arkShares:Number.isFinite(shares)?shares:null,positionCapital:Number.isFinite(capital)?capital:null};
   });
 }
+const isMobileOcrDevice=()=>/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)||matchMedia("(pointer: coarse)").matches;
 async function prepareOcrImage(file){
-  const bitmap=await createImageBitmap(file),scale=Math.min(2,1800/bitmap.width),canvas=document.createElement("canvas");
+  const bitmap=await createImageBitmap(file),mobile=isMobileOcrDevice(),maxWidth=mobile?1500:1800,maxPixels=mobile?3800000:7000000,scale=Math.min(mobile?1.35:2,maxWidth/bitmap.width,Math.sqrt(maxPixels/(bitmap.width*bitmap.height))),canvas=document.createElement("canvas");
   canvas.width=Math.round(bitmap.width*scale); canvas.height=Math.round(bitmap.height*scale);
   const context=canvas.getContext("2d"); context.drawImage(bitmap,0,0,canvas.width,canvas.height); bitmap.close();
-  return {image:canvas,width:canvas.width};
+  return {image:canvas,width:canvas.width,height:canvas.height};
 }
 function renderOcrReview(){
   $("ocrReview").hidden=!ocrRows.length;
@@ -320,20 +332,24 @@ async function recognizeArkScreenshots(){
   $("runOcrBtn").disabled=true; $("ocrProgress").hidden=false; $("ocrProgressBar").style.width="2%"; $("ocrStatus").textContent="正在載入本機辨識模型…";
   let worker;
   try{
-    worker=await Tesseract.createWorker(["chi_tra","eng"],Tesseract.OEM.LSTM_ONLY,{workerPath:"vendor/tesseract/worker.min.js",langPath:"vendor/tesseract/lang",corePath:"vendor/tesseract",logger:message=>{ if(message.progress!==undefined){ const progress=Math.round((message.progress*.75)*100); $("ocrProgressBar").style.width=`${Math.max(2,progress)}%`; $("ocrStatus").textContent=`${message.status==="recognizing text"?"辨識文字":"準備模型"}… ${Math.round(message.progress*100)}%`; } }});
+    const mobile=isMobileOcrDevice(),languages=mobile?["eng"]:["chi_tra","eng"];
+    worker=await Tesseract.createWorker(languages,Tesseract.OEM.LSTM_ONLY,{workerPath:"vendor/tesseract/worker.min.js",langPath:"vendor/tesseract/lang",corePath:"vendor/tesseract",logger:message=>{ if(message.progress!==undefined){ const progress=Math.round((message.progress*.75)*100); $("ocrProgressBar").style.width=`${Math.max(2,progress)}%`; $("ocrStatus").textContent=`${message.status==="recognizing text"?"辨識文字":"準備模型"}… ${Math.round(message.progress*100)}%`; } }});
     await worker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.AUTO,preserve_interword_spaces:"1"});
-    const found=[];
+    const found=[],imageResults=[],failures=[];
     for(let i=0;i<ocrFiles.length;i++){
       $("ocrStatus").textContent=`正在辨識第 ${i+1} / ${ocrFiles.length} 張…`;
-      const prepared=await prepareOcrImage(ocrFiles[i]);
-      const result=await worker.recognize(prepared.image,{}, {text:true,blocks:true});
-      const allWords=flattenOcrWords(result.data.blocks);
-      const detectedRows=parseArkScreenshotWords(allWords,prepared.width);
-      const wordRows=recoverPremiumsByPosition(allWords,prepared.width,recoverArkScreenshotRows(detectedRows,prepared.width,prepared.image.height));
-      found.push(...wordRows,...parseArkScreenshotText(result.data.text),...parseArkSequentialText(result.data.text,wordRows));
+      let prepared;
+      try{
+        prepared=await prepareOcrImage(ocrFiles[i]);
+        const result=await worker.recognize(prepared.image,{}, {text:true,blocks:true}),allWords=flattenOcrWords(result.data.blocks),layoutRows=parseArkRowsByLayout(allWords,prepared.width,prepared.height),detectedRows=parseArkScreenshotWords(allWords,prepared.width),expectedRows=recoverArkScreenshotRows([...layoutRows,...detectedRows],prepared.width,prepared.height),wordRows=recoverPremiumsByPosition(allWords,prepared.width,expectedRows),rows=[...wordRows,...parseArkScreenshotText(result.data.text),...parseArkSequentialText(result.data.text,wordRows)];
+        found.push(...rows); imageResults.push(mergeOcrRows(rows).length);
+      }catch(imageError){ console.error(imageError); failures.push(i+1); imageResults.push(0); }
+      finally{ if(prepared?.image){prepared.image.width=1;prepared.image.height=1;} }
     }
+    if(!found.length) throw new Error("兩張圖片都無法完成辨識，請重新整理頁面後再試。");
     ocrRows=mergeOcrRows(found); renderOcrReview(); $("ocrProgressBar").style.width="100%";
-    $("ocrStatus").textContent=ocrRows.length?`已辨識 ${ocrRows.length} 檔 ETF，請核對後套用。`:"未找到 ETF 代號，請改用清晰、未裁掉代號的截圖。";
+    const detail=imageResults.map((count,index)=>`第${index+1}張 ${count} 檔`).join("、"),retry=failures.length?`；第 ${failures.join("、")} 張未完成，可重新選圖再試。`:"";
+    $("ocrStatus").textContent=ocrRows.length?`已辨識 ${ocrRows.length} 檔 ETF（${detail}），請核對後套用${retry}`:"未找到 ETF 代號，請改用清晰、未裁掉代號的截圖。";
   }catch(error){ console.error(error); const message=String(error?.message||error||""); const hint=/worker|fetch|network|load/i.test(message)?"請確認是由 GitHub Pages 或「啟動網站.cmd」開啟，並確認 vendor/tesseract 已上傳。":"請重新選擇清晰截圖。"; $("ocrStatus").textContent=`辨識失敗。${hint}${message?` （${message.slice(0,120)}）`:""}`; }
   finally{ if(worker) await worker.terminate(); $("runOcrBtn").disabled=!ocrFiles.length; }
 }
@@ -421,6 +437,7 @@ function runSelfTests(){ const tests=[]; const test=(name,fn)=>{try{tests.push([
   test("單日快速下降仍可觸發明確停買",()=>calculateDecision({...base,todayArk:70,actualAllocation:20,arkHistory:[81,80,79,78,77,77]}).regime==="WATCH");
   test("年度方舟水位只保留 80% 以上與 64% 以下",()=>{const rows=getAnnualArkLevelRecords([{date:"2026-01-01",arkAllocation:80},{date:"2026-01-02",arkAllocation:70},{date:"2026-01-03",arkAllocation:64}],2026);return rows.length===2;});
   test("連續極端日期會合併成事件",()=>{const rows=getAnnualArkRecords([{date:"2026-01-01",arkAllocation:81,taiwanIndex:100},{date:"2026-01-02",arkAllocation:82,taiwanIndex:102},{date:"2026-01-03",arkAllocation:79,taiwanIndex:101}],2026),events=buildArkLevelEvents(rows);return events.length===1&&events[0].duration===2&&events[0].extreme.arkAllocation===82&&events[0].exit.date==="2026-01-03";});
+  test("手機漏讀代號時仍會補回預期 ETF",()=>recoverArkScreenshotRows([],1000,2000).length===8&&recoverArkScreenshotRows([],1200,700).length===2);
   const passed=tests.filter(t=>t[1]).length; $("selfTestBadge").textContent=`${passed} / ${tests.length} 通過`; $("selfTestBadge").className=`badge ${passed===tests.length?"buy":"sell"}`; $("selfTestList").innerHTML=tests.map(([n,ok])=>`<li>${ok?"通過":"失敗"} · ${n}</li>`).join(""); return {passed,total:tests.length,tests}; }
 
 function saveETFs(){ localStorage.setItem(CONFIG.storageKeys.etfs,JSON.stringify(window.currentETFs)); }
