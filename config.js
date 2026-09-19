@@ -1,6 +1,10 @@
 window.CONFIG = Object.freeze({
-  strategyVersion: "V1.0",
+  strategyVersion: "V1.1",
   deadBand: 1,
+  buyWatchMaxGap: 5,
+  defensiveAccumulationGap: 20,
+  rapidDropPause: 6,
+  prolongedDropPause: 12,
   distributionDrawdown: 2,
   confirmedDistributionDrawdown: 5,
   riskOffDrawdown: 8,
@@ -12,7 +16,7 @@ window.CONFIG = Object.freeze({
   historyLimit: 60,
   googleSheets: {
     enabled: true,
-    webAppUrl: "https://script.google.com/macros/s/AKfycbyHHyiRN97QzK7b6oZ9zDxBdcyWnHVWAE00Cb9Yiih6Tal7qmnlh4cxM6ch3KGV-vmc/exec",
+    webAppUrl: "https://script.google.com/macros/s/AKfycbx_hrLGj3Hhezed8EpAX_INeZxbvRl4xW6AcEbjVu6VeWGTJz-f1zgQLl88b9FgXkQk/exec",
     sheetName: "紀錄",
     spreadsheetId: "1YlZu_ztxjwjdBkld25l4H4WdaBb94E8u3r02-ew3NfA",
     gid: "671589303",
@@ -22,6 +26,6 @@ window.CONFIG = Object.freeze({
     state: "arkStrategyLab.state.v1",
     history: "arkStrategyLab.history.v1",
     etfs: "arkStrategyLab.etfs.v1",
-    cache: "arkStrategyLab.centralCache.v1"
+    cache: "arkStrategyLab.centralCache.v2"
   }
 });

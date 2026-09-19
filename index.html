@@ -90,13 +90,28 @@
     </section>
 
     <section class="card etf-section">
-      <div class="section-head wrap"><div><h2>ETF 每日輸入與執行建議</h2><p>ETF 基本資料會自動保留；每天只需更新淨值、溢價率、ARK 建議股數與目前權重。</p></div><div class="button-row"><button id="addEtfBtn" class="button secondary" type="button">新增 ETF</button><button id="sampleBtn" class="button ghost" type="button">載入範例</button></div></div>
+      <div class="section-head wrap"><div><h2>ETF 每日輸入與執行建議</h2><p>上傳方舟系統截圖，自動識別淨值、折溢價、位階股數與位階佈局金額。</p></div><div class="button-row"><button id="addEtfBtn" class="button secondary" type="button">新增 ETF</button><button id="sampleBtn" class="button ghost" type="button">載入範例</button></div></div>
+      <section class="ocr-import" aria-labelledby="ocrTitle">
+        <div class="ocr-copy"><div><h3 id="ocrTitle">從方舟截圖匯入</h3><p>一次可選 1–2 張。圖片只在這台裝置上辨識，不會上傳到第三方。</p></div><span class="badge neutral">本機 OCR</span></div>
+        <div class="ocr-actions">
+          <label class="file-button">選擇截圖<input id="ocrImages" type="file" accept="image/*" multiple></label>
+          <button id="runOcrBtn" class="button primary" type="button" disabled>開始辨識</button>
+          <button id="clearOcrBtn" class="button ghost" type="button" hidden>清除</button>
+          <span id="ocrStatus" role="status">尚未選擇圖片</span>
+        </div>
+        <div id="ocrImagePreview" class="ocr-image-preview"></div>
+        <div id="ocrProgress" class="ocr-progress" hidden><span id="ocrProgressBar"></span></div>
+        <div id="ocrReview" class="ocr-review" hidden>
+          <div class="ocr-review-head"><div><h3>請先核對辨識結果</h3><p>可直接修正任何欄位；數值 0 會正常保留。</p></div><button id="applyOcrBtn" class="button secondary" type="button">套用到 ETF 資料</button></div>
+          <div id="ocrReviewGrid" class="ocr-review-grid"></div>
+        </div>
+      </section>
       <div id="etfCards" class="etf-grid"></div>
       <div class="reconciliation"><span>全域目標執行金額</span><strong id="globalBudget">—</strong><span>最終委託總額</span><strong id="orderTotal">—</strong><span>未配置金額</span><strong id="unallocated">—</strong></div>
     </section>
 
     <section class="bottom-grid">
-      <article class="card research-card"><div class="section-head"><h2>研究案例 · 2026/03/31</h2><span class="badge warning">全面極端溢價狀態</span></div><p><strong>ARK 87.4%</strong> · CNN 15 · 回報十檔全數溢價</p><p>已知八檔溢價：平均約 1.42%、中位數約 1.15%、範圍 0.95%–2.83%。另外兩檔個別數值未知，系統不進行推估。</p><p>00911 的 +2.83% 溢價保留供反事實研究使用，不能因此認定支付溢價必然是最佳選擇。</p></article>
+      <article class="card research-card"><div class="section-head"><div><h2>今年方舟水位研究</h2><p>年度分布、80%以上／64%以下紀錄，以及連續極端水位事件</p></div><span id="arkLevelCount" class="badge warning">讀取中</span></div><div id="arkLevelRecords" class="ark-level-records"><p class="note">正在讀取今年紀錄…</p></div></article>
       <article class="card test-card"><div class="section-head"><h2>系統自我測試</h2><span id="selfTestBadge" class="badge neutral">測試中</span></div><ol id="selfTestList"></ol></article>
     </section>
 
@@ -104,6 +119,6 @@
   </main>
 
   <footer>本系統僅供決策支援與歷史研究使用。策略參數為 V1 規則，不代表報酬預測。</footer>
-  <script src="config.js"></script><script src="app.js"></script>
+  <script src="vendor/tesseract/tesseract.min.js"></script><script src="config.js"></script><script src="app.js"></script>
 </body>
 </html>
