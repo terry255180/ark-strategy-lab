@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>ARK Strategy Lab｜方舟策略實驗室</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">ARK STRATEGY LAB · 方舟策略實驗室</p>
+      <h1>ARK 每日執行決策</h1>
+    </div>
+    <div class="header-meta">
+      <span>今日日期 <strong id="decisionDateDisplay">—</strong></span>
+      <input id="decisionDate" type="hidden">
+      <span>策略版本 <strong id="strategyVersion">V1.0</strong></span>
+      <span id="syncStatus" class="badge neutral">本機資料 · 就緒</span>
+      <button id="syncBtn" class="button secondary" type="button">立即同步</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero-grid" aria-label="每日決策摘要">
+      <article class="metric card"><span>ARK 目標配置</span><strong id="arkTarget">—</strong><small>建議曝險水位</small></article>
+      <article class="metric card"><span>實際配置</span><strong id="actualValue">—</strong><small>個人目前配置</small></article>
+      <article class="metric card"><span>配置缺口</span><strong id="gapValue">—</strong><small id="gapLabel">—</small></article>
+      <article class="metric card"><span>ARK 趨勢</span><strong id="trendValue">—</strong><small>一日變化</small></article>
+      <article class="metric card"><span>距近期高點</span><strong id="drawdownValue">—</strong><small>近十日高點回撤</small></article>
+      <article class="metric card emphasis"><span>主要狀態</span><strong id="regimeValue">—</strong><small>單一策略狀態</small></article>
+    </section>
+
+    <section class="decision-grid">
+      <article class="card action-card">
+        <div class="section-head"><h2>今日動作</h2><span id="actionBadge" class="badge neutral">—</span></div>
+        <div class="action-line"><strong id="actionValue">—</strong><span id="speedValue">—</span></div>
+        <dl class="target-list">
+          <div><dt>執行後目標配置</dt><dd id="targetExecution">—</dd></div>
+          <div><dt>今日建議執行金額</dt><dd id="targetCapital">—</dd></div>
+          <div><dt>執行速度</dt><dd id="executionSpeed">—</dd></div>
+          <div><dt>執行急迫度</dt><dd id="urgencyScore">—</dd></div>
+        </dl>
+      </article>
+      <article class="card explanation-card">
+        <div class="section-head"><h2>為什麼做出這個決策？</h2><span class="micro">規則驅動</span></div>
+        <ul id="decisionReasons"></ul>
+      </article>
+    </section>
+
+    <section class="workspace-grid">
+      <article class="card inputs-card">
+        <div class="section-head"><h2>每日輸入</h2><span class="micro">可編輯</span></div>
+        <p class="section-note">每天只需確認 ARK 配置、實際配置與建議佈局金額。其餘指標可在「進階市場條件」中選填。</p>
+        <div class="form-grid">
+          <label>今日 ARK 配置 %<input id="todayArk" type="number" min="0" max="100" step="0.1"></label>
+          <label>實際持股配置 %<input id="actualAllocation" type="number" min="0" max="100" step="0.01"></label>
+          <label>ARK 建議佈局金額（元）<input id="arkSuggestedCapital" type="number" min="0" step="1000" placeholder="例如 50000"></label>
+          <label>昨日 ARK 配置 %<input id="yesterdayArk" type="number" min="0" max="100" step="0.1"></label>
+          <label>三日前 ARK 配置 %<input id="ark3D" type="number" min="0" max="100" step="0.1"></label>
+          <label>五日前 ARK 配置 %<input id="ark5D" type="number" min="0" max="100" step="0.1"></label>
+          <label>近十日 ARK 高點 %<input id="peak10D" type="number" min="0" max="100" step="0.1"></label>
+        </div>
+        <details class="advanced-panel">
+          <summary>進階市場條件（非必填）</summary>
+          <p>這些欄位只會小幅調整執行速度，不會改變 ARK 的主要方向。不確定時維持預設值即可。</p>
+          <div class="form-grid">
+            <label>CNN 恐懼與貪婪指數<input id="cnn" type="number" min="0" max="100" step="1"></label>
+            <label>RSI<input id="rsi" type="number" min="0" max="100" step="0.1"></label>
+            <label>二十日乖離率 %<input id="bias20D" type="number" step="0.1"></label>
+            <label>融資維持率 %<input id="margin" type="number" min="0" step="0.1"></label>
+            <label>市場位置<select id="marketPosition"><option value="LOW">接近區間低點</option><option value="MID">中性／不確定</option><option value="HIGH">接近區間高點</option></select><small>用來判斷市場是否接近近期高低點；只調整買賣速度。</small></label>
+          </div>
+        </details>
+        <div class="button-row"><button id="saveBtn" class="button primary" type="button">儲存今日紀錄</button><span id="saveMessage" role="status"></span></div>
+      </article>
+
+      <article class="card trend-card">
+        <div class="section-head"><h2>ARK 趨勢判讀</h2><span class="micro">自動計算</span></div>
+        <p id="trendSummary" class="trend-summary">系統會比較今日、昨日與近十日高點，判斷應正常建倉、減速觀察或分批調節。</p>
+        <div class="chart-legend"><span><i class="ark-line"></i>ARK 建議持股 %（折線）</span><span><i class="index-bar"></i>台灣加權指數（柱狀）</span></div>
+        <div id="sparkline" class="sparkline" aria-label="ARK 建議持股與台灣加權指數趨勢"></div>
+        <div class="trend-stats">
+          <div><span>1D</span><strong id="delta1D">—</strong></div><div><span>2D</span><strong id="delta2D">—</strong></div>
+          <div><span>3D</span><strong id="delta3D">—</strong></div><div><span>5D</span><strong id="delta5D">—</strong></div>
+        </div>
+        <p class="note">這個區塊不需要另外操作。上方輸入的昨日、三日前、五日前與近十日高點，會自動用來判斷 ARK 方向及回撤程度。</p>
+      </article>
+    </section>
+
+    <section class="card etf-section">
+      <div class="section-head wrap"><div><h2>ETF 每日輸入與執行建議</h2><p>上傳方舟系統截圖，自動識別淨值、折溢價、位階股數與位階佈局金額。</p></div><div class="button-row"><button id="addEtfBtn" class="button secondary" type="button">新增 ETF</button><button id="sampleBtn" class="button ghost" type="button">載入範例</button></div></div>
+      <section class="ocr-import" aria-labelledby="ocrTitle">
+        <div class="ocr-copy"><div><h3 id="ocrTitle">從方舟截圖匯入</h3><p>一次可選 1–2 張。圖片只在這台裝置上辨識，不會上傳到第三方。</p></div><span class="badge neutral">本機 OCR</span></div>
+        <div class="ocr-actions">
+          <label class="file-button">選擇截圖<input id="ocrImages" type="file" accept="image/*" multiple></label>
+          <button id="runOcrBtn" class="button primary" type="button" disabled>開始辨識</button>
+          <button id="clearOcrBtn" class="button ghost" type="button" hidden>清除</button>
+          <span id="ocrStatus" role="status">尚未選擇圖片</span>
+        </div>
+        <div id="ocrImagePreview" class="ocr-image-preview"></div>
+        <div id="ocrProgress" class="ocr-progress" hidden><span id="ocrProgressBar"></span></div>
+        <div id="ocrReview" class="ocr-review" hidden>
+          <div class="ocr-review-head"><div><h3>請先核對辨識結果</h3><p>可直接修正任何欄位；數值 0 會正常保留。</p></div><button id="applyOcrBtn" class="button secondary" type="button">套用到 ETF 資料</button></div>
+          <div id="ocrReviewGrid" class="ocr-review-grid"></div>
+        </div>
+      </section>
+      <div id="etfCards" class="etf-grid"></div>
+      <div class="reconciliation"><span>全域目標執行金額</span><strong id="globalBudget">—</strong><span>最終委託總額</span><strong id="orderTotal">—</strong><span>未配置金額</span><strong id="unallocated">—</strong></div>
+    </section>
+
+    <section class="bottom-grid">
+      <article class="card research-card"><div class="section-head"><div><h2>今年方舟水位研究</h2><p>年度分布、80%以上／64%以下紀錄，以及連續極端水位事件</p></div><span id="arkLevelCount" class="badge warning">讀取中</span></div><div id="arkLevelRecords" class="ark-level-records"><p class="note">正在讀取今年紀錄…</p></div></article>
+      <article class="card test-card"><div class="section-head"><h2>系統自我測試</h2><span id="selfTestBadge" class="badge neutral">測試中</span></div><ol id="selfTestList"></ol></article>
+    </section>
+
+    <section class="card history-section"><div class="section-head"><h2>本機執行歷史</h2><span id="historyCount" class="micro">0 / 60</span></div><div id="historyCards" class="history-cards"></div></section>
+  </main>
+
+  <footer>本系統僅供決策支援與歷史研究使用。策略參數為 V1 規則，不代表報酬預測。</footer>
+  <script src="vendor/tesseract/tesseract.min.js"></script><script src="config.js"></script><script src="app.js"></script>
+</body>
+</html>
