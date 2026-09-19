@@ -303,12 +303,15 @@ function mergeOcrRows(rows){
   const merged=new Map();
   rows.forEach(row=>{ const old=merged.get(row.symbol)||{}; merged.set(row.symbol,{...old,...Object.fromEntries(Object.entries(row).filter(([,value])=>value!==null&&value!==""))}); });
   return [...merged.values()].slice(0,10).map(row=>{
-    let nav=Number(row.nav),shares=Number(row.arkShares),capital=Number(row.positionCapital);
-    if(nav>=1000) nav=nav/100;
+    let nav=row.nav===null||row.nav===undefined?NaN:Number(row.nav),shares=row.arkShares===null||row.arkShares===undefined?NaN:Number(row.arkShares),capital=row.positionCapital===null||row.positionCapital===undefined?NaN:Number(row.positionCapital);
+    if(nav>=1000) nav=nav/100; if(!Number.isFinite(nav)||nav<5||nav>1000) nav=null;
+    if(!Number.isInteger(shares)||shares<0||shares>20) shares=null;
+    if(!Number.isFinite(capital)||capital<0||capital>20000) capital=null;
+    if(Number.isFinite(nav)&&Number.isFinite(capital)){ const inferredShares=Math.round(capital/nav),inferredCapital=Math.ceil(nav*inferredShares); if(inferredShares>=0&&inferredShares<=20&&Math.abs(capital-inferredCapital)<=2) shares=inferredShares; }
     if(capital===0&&!Number.isFinite(shares)) shares=0;
     if(shares===0&&(!Number.isFinite(capital)||capital!==0)) capital=0;
-    const expected=Number.isFinite(nav)&&Number.isFinite(shares)?Math.round(nav*shares):null;
-    if(expected!==null&&shares>0&&(!Number.isFinite(capital)||Math.abs(capital-expected)>Math.max(2,expected*.2))) capital=expected;
+    const expected=Number.isFinite(nav)&&Number.isFinite(shares)?Math.ceil(nav*shares):null;
+    if(expected!==null) capital=expected;
     return {...row,name:ETF_NAME_BY_SYMBOL[row.symbol]||row.name,nav:Number.isFinite(nav)?round(nav,2):null,arkShares:Number.isFinite(shares)?shares:null,positionCapital:Number.isFinite(capital)?capital:null};
   });
 }
@@ -319,6 +322,8 @@ async function prepareOcrImage(file){
   const context=canvas.getContext("2d"); context.drawImage(bitmap,0,0,canvas.width,canvas.height); bitmap.close();
   return {image:canvas,width:canvas.width,height:canvas.height};
 }
+function prepareMobileNumericCrop(prepared){ const x=Math.round(prepared.width*.28),canvas=document.createElement("canvas"); canvas.width=prepared.width-x; canvas.height=prepared.height; canvas.getContext("2d").drawImage(prepared.image,x,0,canvas.width,canvas.height,0,0,canvas.width,canvas.height); return {image:canvas,x}; }
+function offsetOcrWords(words,xOffset){ return words.map(word=>({...word,bbox:{...word.bbox,x0:word.bbox.x0+xOffset,x1:word.bbox.x1+xOffset}})); }
 function renderOcrReview(){
   $("ocrReview").hidden=!ocrRows.length;
   $("ocrReviewGrid").innerHTML=ocrRows.map((row,index)=>`<article class="ocr-result-card"><strong>${escapeHtml(row.symbol||`第 ${index+1} 檔`)}</strong><div class="ocr-fields"><label>代號<input data-ocr-index="${index}" data-ocr-field="symbol" value="${escapeHtml(row.symbol)}"></label><label>名稱<input data-ocr-index="${index}" data-ocr-field="name" value="${escapeHtml(row.name)}"></label><label>淨值<input type="number" step="0.01" data-ocr-index="${index}" data-ocr-field="nav" value="${row.nav??""}"></label><label>折溢價 %<input type="number" step="0.01" data-ocr-index="${index}" data-ocr-field="premium" value="${row.premium??""}"></label><label>位階股數<input type="number" min="0" step="1" data-ocr-index="${index}" data-ocr-field="arkShares" value="${row.arkShares??""}"></label><label>位階佈局金額<input type="number" min="0" step="1" data-ocr-index="${index}" data-ocr-field="positionCapital" value="${row.positionCapital??""}"></label></div></article>`).join("");
@@ -334,17 +339,18 @@ async function recognizeArkScreenshots(){
   try{
     const mobile=isMobileOcrDevice(),languages=mobile?["eng"]:["chi_tra","eng"];
     worker=await Tesseract.createWorker(languages,Tesseract.OEM.LSTM_ONLY,{workerPath:"vendor/tesseract/worker.min.js",langPath:"vendor/tesseract/lang",corePath:"vendor/tesseract",logger:message=>{ if(message.progress!==undefined){ const progress=Math.round((message.progress*.75)*100); $("ocrProgressBar").style.width=`${Math.max(2,progress)}%`; $("ocrStatus").textContent=`${message.status==="recognizing text"?"辨識文字":"準備模型"}… ${Math.round(message.progress*100)}%`; } }});
-    await worker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.AUTO,preserve_interword_spaces:"1"});
+    await worker.setParameters(mobile?{tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT,preserve_interword_spaces:"1",tessedit_char_whitelist:"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.,+-%"}:{tessedit_pageseg_mode:Tesseract.PSM.AUTO,preserve_interword_spaces:"1"});
     const found=[],imageResults=[],failures=[];
     for(let i=0;i<ocrFiles.length;i++){
       $("ocrStatus").textContent=`正在辨識第 ${i+1} / ${ocrFiles.length} 張…`;
-      let prepared;
+      let prepared,numericCrop;
       try{
         prepared=await prepareOcrImage(ocrFiles[i]);
-        const result=await worker.recognize(prepared.image,{}, {text:true,blocks:true}),allWords=flattenOcrWords(result.data.blocks),layoutRows=parseArkRowsByLayout(allWords,prepared.width,prepared.height),detectedRows=parseArkScreenshotWords(allWords,prepared.width),expectedRows=recoverArkScreenshotRows([...layoutRows,...detectedRows],prepared.width,prepared.height),wordRows=recoverPremiumsByPosition(allWords,prepared.width,expectedRows),rows=[...wordRows,...parseArkScreenshotText(result.data.text),...parseArkSequentialText(result.data.text,wordRows)];
+        numericCrop=mobile?prepareMobileNumericCrop(prepared):null;
+        const result=await worker.recognize(numericCrop?.image||prepared.image,{}, {text:true,blocks:true}),rawWords=flattenOcrWords(result.data.blocks),allWords=numericCrop?offsetOcrWords(rawWords,numericCrop.x):rawWords,layoutRows=parseArkRowsByLayout(allWords,prepared.width,prepared.height),detectedRows=mobile?[]:parseArkScreenshotWords(allWords,prepared.width),expectedRows=recoverArkScreenshotRows([...layoutRows,...detectedRows],prepared.width,prepared.height),wordRows=recoverPremiumsByPosition(allWords,prepared.width,expectedRows),rows=[...wordRows,...parseArkScreenshotText(result.data.text),...parseArkSequentialText(result.data.text,wordRows)];
         found.push(...rows); imageResults.push(mergeOcrRows(rows).length);
       }catch(imageError){ console.error(imageError); failures.push(i+1); imageResults.push(0); }
-      finally{ if(prepared?.image){prepared.image.width=1;prepared.image.height=1;} }
+      finally{ if(numericCrop?.image){numericCrop.image.width=1;numericCrop.image.height=1;} if(prepared?.image){prepared.image.width=1;prepared.image.height=1;} }
     }
     if(!found.length) throw new Error("兩張圖片都無法完成辨識，請重新整理頁面後再試。");
     ocrRows=mergeOcrRows(found); renderOcrReview(); $("ocrProgressBar").style.width="100%";
@@ -438,6 +444,8 @@ function runSelfTests(){ const tests=[]; const test=(name,fn)=>{try{tests.push([
   test("年度方舟水位只保留 80% 以上與 64% 以下",()=>{const rows=getAnnualArkLevelRecords([{date:"2026-01-01",arkAllocation:80},{date:"2026-01-02",arkAllocation:70},{date:"2026-01-03",arkAllocation:64}],2026);return rows.length===2;});
   test("連續極端日期會合併成事件",()=>{const rows=getAnnualArkRecords([{date:"2026-01-01",arkAllocation:81,taiwanIndex:100},{date:"2026-01-02",arkAllocation:82,taiwanIndex:102},{date:"2026-01-03",arkAllocation:79,taiwanIndex:101}],2026),events=buildArkLevelEvents(rows);return events.length===1&&events[0].duration===2&&events[0].extreme.arkAllocation===82&&events[0].exit.date==="2026-01-03";});
   test("手機漏讀代號時仍會補回預期 ETF",()=>recoverArkScreenshotRows([],1000,2000).length===8&&recoverArkScreenshotRows([],1200,700).length===2);
+  test("位階佈局金額會由淨值與股數重算",()=>mergeOcrRows([{symbol:"00631L",nav:37.62,arkShares:3,positionCapital:999}])[0].positionCapital===113);
+  test("位階股數可由佈局金額交叉校驗",()=>mergeOcrRows([{symbol:"0056",nav:56.93,arkShares:7,positionCapital:57}])[0].arkShares===1);
   const passed=tests.filter(t=>t[1]).length; $("selfTestBadge").textContent=`${passed} / ${tests.length} 通過`; $("selfTestBadge").className=`badge ${passed===tests.length?"buy":"sell"}`; $("selfTestList").innerHTML=tests.map(([n,ok])=>`<li>${ok?"通過":"失敗"} · ${n}</li>`).join(""); return {passed,total:tests.length,tests}; }
 
 function saveETFs(){ localStorage.setItem(CONFIG.storageKeys.etfs,JSON.stringify(window.currentETFs)); }
