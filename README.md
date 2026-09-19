@@ -4,15 +4,16 @@ V1 是可離線使用的 Quant Execution Decision Support 系統。ARK Target �
 
 ## 直接執行
 
-雙擊 `index.html`，即可在桌面瀏覽器或 iPhone Safari 開啟。不需要 npm、建置流程、CDN 或網路連線。若瀏覽器限制 `file://` 的儲存，可用任何靜態伺服器開啟資料夾；網站本身沒有伺服器相依。
+雙擊 `啟動網站.cmd`，系統會自動開啟 `http://127.0.0.1:4173`。OCR 不能從直接雙擊 `index.html` 得到的 `file://` 網址運作，因為瀏覽器會封鎖 Web Worker 與語言模型。GitHub Pages 不受此限制。
 
 ## 每日使用方式
 
 1. 網頁會依台灣時間自動顯示今日日期，不需要手動輸入。
 2. 確認今日 ARK 配置、實際配置、ARK 建議佈局金額，以及昨日／三日前／五日前與近十日高點。
 3. CNN、RSI、二十日乖離率、融資維持率與市場位置都屬於非必填進階條件；不確定時維持預設值。
-4. ETF 基本資料會保存在瀏覽器。每天只需在 ETF 卡片更新淨值、溢價率、ARK 建議股數與目前權重。
-5. 檢查執行建議後按「儲存今日紀錄」。
+4. 在「從方舟截圖匯入」選擇 1–2 張圖片，按「開始辨識」，核對淨值、折溢價、位階股數與位階佈局金額後再套用。
+5. ETF 基本資料會保存在瀏覽器。OCR 引擎與繁中／英文模型位於 `vendor/tesseract/`，圖片只在瀏覽器本機辨識，不會傳到外部 OCR 服務。
+6. 檢查執行建議後按「儲存今日紀錄」。
 
 ## 專案架構
 
@@ -25,11 +26,11 @@ V1 是可離線使用的 Quant Execution Decision Support 系統。ARK Target �
 
 ## Strategy Engine 與 State Machine
 
-`determineRegime()` 只回傳一個主要狀態：`ACCUMULATION`、`HOLD`、`WATCH`、`DISTRIBUTION`、`CONFIRMED_DISTRIBUTION` 或 `RISK_OFF`。±1pp dead band 固定為 HOLD。下降期依連續下降天數與近 10 日高點回撤逐級進入 Distribution 狀態；Confirmed Distribution 必須先經過 Distribution，避免單日小幅波動直接從買進切換為高強度賣出。8pp Risk-Off 門檻仍可直接啟動風控。
+`determineRegime()` 會依配置缺口與趨勢回傳主要狀態。買進端採「缺口優先、趨勢調速」：1–5% 缺口在 ARK 下跌時可暫停觀察，5–20% 仍減速建倉，超過 20% 進入 `DEFENSIVE_ACCUMULATION`（防守型分批建倉）並只補 10% 缺口。只有單日快速下降、連續深度回撤或市場極端過熱才停買。賣出端則依回撤逐級進入 Distribution、Confirmed Distribution 與 Risk-Off。
 
 ## Buy Engine
 
-`calculateBuyMultiplier()` 對 gap 使用連續分段函數：小 gap 可達 3×，20pp 以上逐步降至 1.8×。`calculateBuyTrendFactor()` 再依 1D Ark 方向調整，最後 clamp 至 0–3×。建議曝險仍以 gap fill rate 分批靠近，不會一天補滿。
+`calculateBuyMultiplier()` 對 gap 使用連續分段函數：小 gap 可達 3×，20% 以上逐步降至 1.8×。`calculateBuyTrendFactor()` 再依 1D Ark 方向調整，最後 clamp 至 0–3×。建議曝險仍以 gap fill rate 分批靠近，不會一天補滿。
 
 ## Sell Engine
 
@@ -55,6 +56,6 @@ V1 是可離線使用的 Quant Execution Decision Support 系統。ARK Target �
 
 ## 驗證
 
-頁面內建 `runSelfTests()`，涵蓋 HOLD、BUY、大 gap multiplier、Distribution、Risk-Off、動態溢價、集中度上限、budget reconciliation、localStorage 與同日更新，共 10 項。
+頁面內建 `runSelfTests()`，涵蓋 HOLD、不同缺口級距的買進／停買判斷、防守型分批建倉、Distribution、Risk-Off、動態溢價、集中度上限、budget reconciliation、localStorage 與同日更新。
 
 本工具是 Decision Support / Historical Research 系統，不是券商交易介面，也不構成保證、預測或最佳買賣點建議。
