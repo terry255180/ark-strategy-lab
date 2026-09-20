@@ -1,5 +1,5 @@
 window.CONFIG = Object.freeze({
-  strategyVersion: "V1.1",
+  strategyVersion: "V1.2",
   deadBand: 1,
   buyWatchMaxGap: 5,
   defensiveAccumulationGap: 20,

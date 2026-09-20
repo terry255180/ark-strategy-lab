@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <title>ARK Strategy Lab｜方舟策略實驗室</title>
-  <link rel="stylesheet" href="styles.css?v=1.3">
+  <link rel="stylesheet" href="styles.css?v=1.4">
 </head>
 <body>
   <header class="topbar">
@@ -51,26 +51,25 @@
 
     <section class="workspace-grid">
       <article class="card inputs-card">
-        <div class="section-head"><h2>每日輸入</h2><span class="micro">可編輯</span></div>
-        <p class="section-note">每天只需確認 ARK 配置、實際配置與建議佈局金額。其餘指標可在「進階市場條件」中選填。</p>
+        <div class="section-head"><h2>每日輸入</h2><span class="micro">3項可編輯 · 其餘自動同步</span></div>
+        <p class="section-note">每天只需確認 ARK 配置、實際配置與建議佈局金額；歷史配置與市場指標由 Google 試算表自動更新。</p>
         <div class="form-grid">
           <label>今日 ARK 配置 %<input id="todayArk" type="number" min="0" max="100" step="0.1"></label>
           <label>實際持股配置 %<input id="actualAllocation" type="number" min="0" max="100" step="0.01"></label>
           <label>ARK 建議佈局金額（元）<input id="arkSuggestedCapital" type="number" min="0" step="1000" placeholder="例如 50000"></label>
-          <label>昨日 ARK 配置 %<input id="yesterdayArk" type="number" min="0" max="100" step="0.1"></label>
-          <label>三日前 ARK 配置 %<input id="ark3D" type="number" min="0" max="100" step="0.1"></label>
-          <label>五日前 ARK 配置 %<input id="ark5D" type="number" min="0" max="100" step="0.1"></label>
-          <label>近十日 ARK 高點 %<input id="peak10D" type="number" min="0" max="100" step="0.1"></label>
+          <label>昨日 ARK 配置 %<input id="yesterdayArk" class="synced-field" type="number" min="0" max="100" step="0.1" readonly></label>
+          <label>三日前 ARK 配置 %<input id="ark3D" class="synced-field" type="number" min="0" max="100" step="0.1" readonly></label>
+          <label>五日前 ARK 配置 %<input id="ark5D" class="synced-field" type="number" min="0" max="100" step="0.1" readonly></label>
+          <label>近十日 ARK 高點 %<input id="peak10D" class="synced-field" type="number" min="0" max="100" step="0.1" readonly></label>
         </div>
-        <details class="advanced-panel">
-          <summary>進階市場條件（非必填）</summary>
-          <p>這些欄位只會小幅調整執行速度，不會改變 ARK 的主要方向。不確定時維持預設值即可。</p>
+        <details class="advanced-panel" open>
+          <summary>Google 試算表市場條件</summary>
+          <p>以下數值由「紀錄」工作表最新一筆資料自動更新，不需要手動輸入。</p>
           <div class="form-grid">
-            <label>CNN 恐懼與貪婪指數<input id="cnn" type="number" min="0" max="100" step="1"></label>
-            <label>RSI<input id="rsi" type="number" min="0" max="100" step="0.1"></label>
-            <label>二十日乖離率 %<input id="bias20D" type="number" step="0.1"></label>
-            <label>融資維持率 %<input id="margin" type="number" min="0" step="0.1"></label>
-            <label>市場位置<select id="marketPosition"><option value="LOW">接近區間低點</option><option value="MID">中性／不確定</option><option value="HIGH">接近區間高點</option></select><small>用來判斷市場是否接近近期高低點；只調整買賣速度。</small></label>
+            <label>CNN 恐懼與貪婪指數<input id="cnn" class="synced-field" type="number" min="0" max="100" step="1" readonly></label>
+            <label>RSI<input id="rsi" class="synced-field" type="number" min="0" max="100" step="0.1" readonly></label>
+            <label>融資維持率 %<input id="margin" class="synced-field" type="number" min="0" step="0.1" readonly></label>
+            <div class="market-prediction"><span>市場位置預測</span><strong id="marketPositionLabel">區間震盪</strong><small id="marketPositionReason">同步資料後自動判斷。</small><input id="marketPosition" type="hidden" value="MID"></div>
           </div>
         </details>
         <div class="button-row"><button id="saveBtn" class="button primary" type="button">儲存今日紀錄</button><span id="saveMessage" role="status"></span></div>
@@ -119,6 +118,6 @@
   </main>
 
   <footer>本系統僅供決策支援與歷史研究使用。策略參數為 V1 規則，不代表報酬預測。</footer>
-  <script src="vendor/tesseract/tesseract.min.js"></script><script src="config.js?v=1.3"></script><script src="app.js?v=1.3"></script>
+  <script src="vendor/tesseract/tesseract.min.js"></script><script src="config.js?v=1.4"></script><script src="app.js?v=1.4"></script>
 </body>
 </html>
