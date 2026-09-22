@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <title>ARK Strategy Lab｜方舟策略實驗室</title>
-  <link rel="stylesheet" href="styles.css?v=1.5">
+  <link rel="stylesheet" href="styles.css?v=1.7">
 </head>
 <body>
   <header class="topbar">
@@ -88,6 +88,29 @@
       </article>
     </section>
 
+    <section class="card rebalance-section" aria-labelledby="rebalanceTitle">
+      <div class="section-head wrap"><div><h2 id="rebalanceTitle">調節計算機 <span class="micro">REBALANCE CALCULATOR</span></h2><p>賣出與否仍由上方 ARK 決策決定；本區只分配已決定的調節金額。</p></div><span class="badge warning">HEURISTIC · 未經回測最佳化</span></div>
+      <div class="rebalance-summary" id="rebalanceSummary"></div>
+      <div class="form-grid rebalance-controls">
+        <label>總資產（僅儲存於本機）<input id="rebalanceTotalAssets" type="number" min="0" step="1000" placeholder="輸入後自動換算調節金額"></label>
+        <label>調節目標金額 NT$<input id="rebalanceTarget" type="number" min="0" step="100" placeholder="由賣出引擎自動帶入，可覆寫"></label>
+        <label>美股 RSI（選填）<input id="rebalanceUsRsi" type="number" min="0" max="100" step="0.1" placeholder="未提供不列入判斷"></label>
+        <label>美股 20 日乖離率 %（選填）<input id="rebalanceUsBias" type="number" step="0.1" placeholder="未提供不列入判斷"></label>
+        <label>美股 20 日區間位置 %（選填）<input id="rebalanceUsPercentile" type="number" min="0" max="100" step="1" placeholder="0–100"></label>
+        <label>美股近期報酬率 %（選填）<input id="rebalanceUsReturn" type="number" step="0.1" placeholder="未提供不列入判斷"></label>
+      </div>
+      <div class="rebalance-switches"><label><input id="rebalanceOddLot" type="checkbox" checked>允許台股零股</label><label><input id="rebalanceFullExit" type="checkbox">允許完整退出持股</label><button id="rebalanceAddHolding" class="button secondary" type="button">新增持股</button><button id="rebalanceCalculate" class="button primary" type="button">計算調節方案</button><button id="rebalanceSave" class="button ghost" type="button">儲存本次方案</button></div>
+      <p id="rebalanceNotice" class="note" role="status">請輸入總資產與持股資料，或手動指定調節目標。</p>
+      <section class="ocr-import rebalance-import" aria-labelledby="rebalanceOcrTitle">
+        <div class="ocr-copy"><div><h3 id="rebalanceOcrTitle">從持股庫存截圖匯入</h3><p>一次選擇最多 4 張庫存明細截圖。辨識在本機進行；先核對股數、價格、損益與市場分類，再套用。</p></div><span class="badge neutral">本機 OCR</span></div>
+        <div class="ocr-actions"><label class="file-button">選擇截圖<input id="rebalanceOcrImages" type="file" accept="image/*" multiple></label><button id="rebalanceRunOcr" class="button primary" type="button" disabled>開始辨識</button><button id="rebalanceClearOcr" class="button ghost" type="button" hidden>清除</button><span id="rebalanceOcrStatus" role="status">尚未選擇圖片</span></div>
+        <div id="rebalanceOcrPreview" class="ocr-image-preview"></div><div id="rebalanceOcrProgress" class="ocr-progress" hidden><span id="rebalanceOcrProgressBar"></span></div>
+        <div id="rebalanceOcrReview" class="ocr-review" hidden><div class="ocr-review-head"><div><h3>核對辨識結果</h3><p>空白代表無法可靠辨識，不會自動補零。至少確認代號、持有股數與價格；同代號會更新原持股，其他持股保留。</p></div><button id="rebalanceApplyOcr" class="button secondary" type="button">套用已核對持股</button></div><div id="rebalanceOcrGrid" class="ocr-review-grid"></div></div>
+      </section>
+      <div id="rebalanceHoldings" class="rebalance-holdings"></div>
+      <div id="rebalanceResults" class="rebalance-results"></div>
+    </section>
+
     <section class="card etf-section">
       <div class="section-head wrap"><div><h2>ETF 每日輸入與執行建議</h2><p>上傳方舟系統截圖，自動識別淨值、折溢價、位階股數與位階佈局金額。</p></div><div class="button-row"><button id="addEtfBtn" class="button secondary" type="button">新增 ETF</button><button id="sampleBtn" class="button ghost" type="button">載入範例</button></div></div>
       <section class="ocr-import" aria-labelledby="ocrTitle">
@@ -118,6 +141,6 @@
   </main>
 
   <footer>本系統僅供決策支援與歷史研究使用。策略參數為 V1 規則，不代表報酬預測。</footer>
-  <script src="vendor/tesseract/tesseract.min.js"></script><script src="config.js?v=1.4"></script><script src="app.js?v=1.4"></script>
+  <script src="vendor/tesseract/tesseract.min.js"></script><script src="config.js?v=1.6"></script><script src="app.js?v=1.6"></script><script src="rebalance.js?v=1.1"></script><script src="rebalance-ocr.js?v=1.0"></script>
 </body>
 </html>
