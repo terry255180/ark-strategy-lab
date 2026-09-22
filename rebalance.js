@@ -79,7 +79,7 @@ function calculateSellPriority(h,context){
   score+=(singleWeight>=lim.singleHigh?p.singleHigh:singleWeight>=lim.singleWarm?p.singleWarm:0);
   score+=(groupWeight>=lim.groupHigh?p.groupHigh:groupWeight>=lim.groupWarm?p.groupWarm:0);
   if(h.leveraged)score+=p.leverage+(singleWeight>=lim.singleHigh&&groupWeight>=lim.groupHigh&&marketFactor>1?p.leverageCluster:0);
-  const smallCleanup=!h.inArkToday&&!h.valueTag&&singleWeight<C.priority.smallPositionRatio;
+  const smallCleanup=!h.inArkToday&&h.valueTag!=="YES"&&singleWeight<C.priority.smallPositionRatio;
   if(smallCleanup)score+=p.smallCleanup;
   score=cap(Math.round(score*marketFactor+profitBuffer),0,100);
   const priorityLevel=score>=p.levels.veryHigh?"VERY_HIGH":score>=p.levels.high?"HIGH":score>=p.levels.medium?"MEDIUM":score>=p.levels.watch?"WATCH":"LOW";
@@ -165,14 +165,15 @@ function renderResults(plan){
   $("rebalanceNotice").textContent=plan.decision.action!=="SELL"&&state.targetOverride==null?"目前賣出引擎沒有調節訊號；如要研究假設情境，可手動輸入目標金額。":plan.target>0?`已計算 ${money(plan.target)} 調節目標。請核對持股、價格及股數，方案不會自動下單。`:"調節目標為 0；不產生賣單。";
 }
 function renderHoldingEditor(){
-  $("rebalanceHoldings").innerHTML=state.holdings.map((h,i)=>`<details class="rebalance-holding" ${i===state.holdings.length-1?"open":""}><summary>${safe(h.symbol||"新持股")} ${safe(h.name)} · ${money(h.marketValue||h.shares*h.currentPrice)}</summary><div class="rebalance-fields">
-    ${field(i,"symbol","代號",h.symbol,"text")}${field(i,"name","名稱",h.name,"text")}${field(i,"shares","持有股數",h.shares)}${field(i,"currentPrice","目前價格",h.currentPrice)}${field(i,"marketValue","市值（可留 0 自算）",h.marketValue)}${field(i,"profitAmount","損益金額",h.profitAmount)}${field(i,"profitPercent","損益 %",h.profitPercent)}${field(i,"arkRank","ARK 名次",h.arkRank)}${field(i,"daysOutOfArk","離開 ARK 天數",h.daysOutOfArk)}${field(i,"arkPresence5D","近 5 日入選次數",h.arkPresence5D)}${field(i,"valueTag","價值標籤",h.valueTag,"text")}${field(i,"heatingTag","熱度標籤",h.heatingTag,"text")}
+  $("rebalanceHoldings").innerHTML=state.holdings.map((h,i)=>`<div class="rebalance-holding"><details ${i===state.holdings.length-1?"open":""}><summary>${safe(h.symbol||"新持股")} ${safe(h.name)} · ${money(h.marketValue||h.shares*h.currentPrice)}</summary><div class="rebalance-fields">
+    ${field(i,"symbol","代號",h.symbol,"text")}${field(i,"name","名稱",h.name,"text")}${field(i,"shares","持有股數",h.shares)}${field(i,"currentPrice","目前價格",h.currentPrice)}${field(i,"marketValue","市值（可留 0 自算）",h.marketValue)}${field(i,"profitAmount","損益金額",h.profitAmount)}${field(i,"profitPercent","損益 %",h.profitPercent)}${yesNoField(i,"valueTag","價值標籤",h.valueTag)}${yesNoField(i,"heatingTag","升溫標籤",h.heatingTag)}
     <label>市場<select data-holding="${i}" data-field="marketRegion">${["TW","US","GLOBAL","OTHER"].map(x=>`<option ${h.marketRegion===x?"selected":""}>${x}</option>`).join("")}</select></label>
     <label>曝險群組<select data-holding="${i}" data-field="exposureGroup">${["TAIWAN_LARGE_CAP","TAIWAN_TECH","TAIWAN_FINANCIAL","US_TECH","US_SEMICONDUCTOR","US_BROAD_MARKET","GLOBAL_TECH","GLOBAL_THEME","OTHER"].map(x=>`<option ${h.exposureGroup===x?"selected":""}>${x}</option>`).join("")}</select></label>
-    <label>資產類型<input data-holding="${i}" data-field="assetType" value="${safe(h.assetType)}"></label><label class="check"><input type="checkbox" data-holding="${i}" data-field="leveraged" ${h.leveraged?"checked":""}>槓桿標的</label><label class="check"><input type="checkbox" data-holding="${i}" data-field="inArkToday" ${h.inArkToday?"checked":""}>今日在 ARK</label><button type="button" class="button ghost" data-remove-holding="${i}">移除此筆</button>
-  </div></details>`).join("")||`<p class="note">尚無持股。按「新增持股」輸入資料；既有 ETF 買進資料不包含實際持股股數與成本，因此不會被當成真實持股。</p>`;
+    <label>資產類型<input data-holding="${i}" data-field="assetType" value="${safe(h.assetType)}"></label><label class="check"><input type="checkbox" data-holding="${i}" data-field="leveraged" ${h.leveraged?"checked":""}>槓桿標的</label><label class="check"><input type="checkbox" data-holding="${i}" data-field="inArkToday" ${h.inArkToday?"checked":""}>今日在 ARK</label>
+  </div></details><button type="button" class="rebalance-remove" data-remove-holding="${i}" aria-label="移除 ${safe(h.symbol||"此筆持股")}" title="移除此筆">×</button></div>`).join("")||`<p class="note">尚無持股。按「新增持股」輸入資料；既有 ETF 買進資料不包含實際持股股數與成本，因此不會被當成真實持股。</p>`;
 }
 function field(i,k,label,value,type="number"){return `<label>${label}<input data-holding="${i}" data-field="${k}" type="${type}" ${type==="number"?'step="any"':""} value="${safe(value??"")}"></label>`;}
+function yesNoField(i,k,label,value){return `<label>${label}<select data-holding="${i}" data-field="${k}"><option value="" ${value!=="YES"&&value!=="NO"?"selected":""}>未設定</option><option value="YES" ${value==="YES"?"selected":""}>YES</option><option value="NO" ${value==="NO"?"selected":""}>NO</option></select></label>`;}
 function importHoldingRows(rows){
   const merged=new Map(state.holdings.filter(h=>h.symbol).map(h=>[String(h.symbol).toUpperCase(),h]));
   for(const row of rows){const symbol=String(row.symbol||"").toUpperCase().trim();if(!symbol||!Number.isInteger(Number(row.shares))||Number(row.shares)<=0||!(Number(row.currentPrice)>0))continue;
@@ -214,7 +215,7 @@ function init(){loadState();renderHoldingEditor();renderRebalanceCalculator();
   // Existing engine is left untouched; observe completed renders.
   const observer=new MutationObserver(()=>renderRebalanceCalculator());observer.observe($("targetExecution"),{childList:true});
   window.RebalanceCalculator={calculateTargetReduction,calculateUSMarketRegime,calculateTaiwanMarketRegime,calculateMarketSellFactor,calculateArkPersistence,calculateSingleConcentration,calculateExposureGroupConcentration,calculateProfitBuffer,calculateSellPriority,generateSellReasons,allocateReductionAcrossMarkets,optimizeSellShares,generateAlternativePlans,saveRebalanceSnapshot,renderRebalanceCalculator,renderMarketRegime,renderSellPlan,renderSellExplanation,runRebalanceSelfTests,buildPlan,importHoldingRows};
-  const tests=runRebalanceSelfTests(),list=$("selfTestList");if(list){list.insertAdjacentHTML("beforeend",tests.tests.map(x=>`<li>${x.ok?"通過":"失敗"} · 調節：${safe(x.name)}</li>`).join(""));const old=Number($("selfTestBadge").textContent.split("/")[0])||0,total=Number($("selfTestBadge").textContent.split("/")[1])||0;$("selfTestBadge").textContent=`${old+tests.passed} / ${total+tests.total} 通過`;$("selfTestBadge").className=`badge ${old+tests.passed===total+tests.total?"buy":"sell"}`;}
+  const tests=runRebalanceSelfTests(),list=$("selfTestList");if(list){list.insertAdjacentHTML("beforeend",tests.tests.map(x=>`<li>${x.ok?"通過":"失敗"} · 調節：${safe(x.name)}</li>`).join(""));const counts=$("selfTestBadge").textContent.match(/(\d+)\s*\/\s*(\d+)/),old=Number(counts?.[1]||0),total=Number(counts?.[2]||0);$("selfTestBadge").textContent=`${old+tests.passed} / ${total+tests.total} 通過`;$("selfTestBadge").className=`badge ${old+tests.passed===total+tests.total?"buy":"sell"}`;}
 }
 document.addEventListener("DOMContentLoaded",init);
 })();

@@ -53,6 +53,7 @@ class GoogleSheetsDataProvider {
   }
   async sync(){
     if(!this.webAppUrl) throw new Error("尚未設定 Apps Script 網頁應用程式網址。");
+    if(location.protocol==="file:") throw new Error("請從 http://127.0.0.1:4173/ 開啟網站；直接開啟 index.html 可能被瀏覽器擋下跨站同步。");
     const separator=this.webAppUrl.includes("?")?"&":"?";
     const response=await fetch(`${this.webAppUrl}${separator}t=${Date.now()}`,{method:"GET",redirect:"follow",cache:"no-store"});
     if(!response.ok) throw new Error(`同步失敗（HTTP ${response.status}）`);
@@ -91,12 +92,15 @@ async function syncCentralData({silent=false}={}){
     const data=await dataProvider.sync();
     applyCentralData(data);
     $("syncStatus").textContent=`Google 試算表 · ${new Date(data.syncedAt).toLocaleTimeString("zh-TW",{hour:"2-digit",minute:"2-digit"})}`;
+    $("syncStatus").title="";
     return data;
   }catch(error){
     const cached=await dataProvider.getCentralData();
     if(cached) applyCentralData(cached);
-    $("syncStatus").textContent=cached?"同步失敗 · 使用上次快取":(CONFIG.googleSheets?.webAppUrl?"Google 同步失敗":"尚未設定 Google 同步");
-    if(!silent) $("saveMessage").textContent=error.message;
+    const reason=error instanceof TypeError?"連線遭瀏覽器阻擋或網路中斷；請確認使用 http://127.0.0.1:4173/ 開啟，並檢查 Apps Script 公開權限":String(error?.message||"未知錯誤");
+    $("syncStatus").textContent=`同步失敗：${reason}${cached?" · 使用上次快取":""}`;
+    $("syncStatus").title=String(error?.message||reason);
+    if(!silent) $("saveMessage").textContent=reason;
     return cached;
   }
 }

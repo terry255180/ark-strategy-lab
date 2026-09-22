@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <title>ARK Strategy Lab｜方舟策略實驗室</title>
-  <link rel="stylesheet" href="styles.css?v=1.7">
+  <link rel="stylesheet" href="styles.css?v=1.9">
 </head>
 <body>
   <header class="topbar">
@@ -102,10 +102,9 @@
       <div class="rebalance-switches"><label><input id="rebalanceOddLot" type="checkbox" checked>允許台股零股</label><label><input id="rebalanceFullExit" type="checkbox">允許完整退出持股</label><button id="rebalanceAddHolding" class="button secondary" type="button">新增持股</button><button id="rebalanceCalculate" class="button primary" type="button">計算調節方案</button><button id="rebalanceSave" class="button ghost" type="button">儲存本次方案</button></div>
       <p id="rebalanceNotice" class="note" role="status">請輸入總資產與持股資料，或手動指定調節目標。</p>
       <section class="ocr-import rebalance-import" aria-labelledby="rebalanceOcrTitle">
-        <div class="ocr-copy"><div><h3 id="rebalanceOcrTitle">從持股庫存截圖匯入</h3><p>一次選擇最多 4 張庫存明細截圖。辨識在本機進行；先核對股數、價格、損益與市場分類，再套用。</p></div><span class="badge neutral">本機 OCR</span></div>
+        <div class="ocr-copy"><div><h3 id="rebalanceOcrTitle">從持股庫存截圖匯入</h3><p>一次選擇最多 4 張庫存明細截圖。辨識在本機進行；完整資料直接顯示於下方持股，請核對數值。缺漏資料不會自動補零。</p></div><span class="badge neutral">本機 OCR</span></div>
         <div class="ocr-actions"><label class="file-button">選擇截圖<input id="rebalanceOcrImages" type="file" accept="image/*" multiple></label><button id="rebalanceRunOcr" class="button primary" type="button" disabled>開始辨識</button><button id="rebalanceClearOcr" class="button ghost" type="button" hidden>清除</button><span id="rebalanceOcrStatus" role="status">尚未選擇圖片</span></div>
         <div id="rebalanceOcrPreview" class="ocr-image-preview"></div><div id="rebalanceOcrProgress" class="ocr-progress" hidden><span id="rebalanceOcrProgressBar"></span></div>
-        <div id="rebalanceOcrReview" class="ocr-review" hidden><div class="ocr-review-head"><div><h3>核對辨識結果</h3><p>空白代表無法可靠辨識，不會自動補零。至少確認代號、持有股數與價格；同代號會更新原持股，其他持股保留。</p></div><button id="rebalanceApplyOcr" class="button secondary" type="button">套用已核對持股</button></div><div id="rebalanceOcrGrid" class="ocr-review-grid"></div></div>
       </section>
       <div id="rebalanceHoldings" class="rebalance-holdings"></div>
       <div id="rebalanceResults" class="rebalance-results"></div>
@@ -141,6 +140,6 @@
   </main>
 
   <footer>本系統僅供決策支援與歷史研究使用。策略參數為 V1 規則，不代表報酬預測。</footer>
-  <script src="vendor/tesseract/tesseract.min.js"></script><script src="config.js?v=1.6"></script><script src="app.js?v=1.6"></script><script src="rebalance.js?v=1.1"></script><script src="rebalance-ocr.js?v=1.0"></script>
+  <script src="vendor/tesseract/tesseract.min.js"></script><script src="config.js?v=1.6"></script><script src="app.js?v=1.7"></script><script src="rebalance.js?v=1.3"></script><script src="rebalance-ocr.js?v=1.5"></script>
 </body>
 </html>
