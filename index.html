@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <title>ARK Strategy Lab｜方舟策略實驗室</title>
-  <link rel="stylesheet" href="styles.css?v=1.9">
+  <link rel="stylesheet" href="styles.css?v=2.0">
 </head>
 <body>
   <header class="topbar">
@@ -88,8 +88,9 @@
       </article>
     </section>
 
-    <section class="card rebalance-section" aria-labelledby="rebalanceTitle">
-      <div class="section-head wrap"><div><h2 id="rebalanceTitle">調節計算機 <span class="micro">REBALANCE CALCULATOR</span></h2><p>賣出與否仍由上方 ARK 決策決定；本區只分配已決定的調節金額。</p></div><span class="badge warning">HEURISTIC · 未經回測最佳化</span></div>
+    <details class="card rebalance-section collapsible-section" aria-labelledby="rebalanceTitle">
+      <summary class="collapsible-section-head"><span><strong id="rebalanceTitle">調節計算機 <span class="micro">REBALANCE CALCULATOR</span></strong><small>賣出與否仍由上方 ARK 決策決定；本區只分配已決定的調節金額。</small></span><span class="collapsible-section-meta"><span class="badge warning">HEURISTIC · 未經回測最佳化</span><i aria-hidden="true"></i></span></summary>
+      <div class="collapsible-section-body">
       <div class="rebalance-summary" id="rebalanceSummary"></div>
       <div class="form-grid rebalance-controls">
         <label>總資產（僅儲存於本機）<input id="rebalanceTotalAssets" type="number" min="0" step="1000" placeholder="輸入後自動換算調節金額"></label>
@@ -108,10 +109,13 @@
       </section>
       <div id="rebalanceHoldings" class="rebalance-holdings"></div>
       <div id="rebalanceResults" class="rebalance-results"></div>
-    </section>
+      </div>
+    </details>
 
-    <section class="card etf-section">
-      <div class="section-head wrap"><div><h2>ETF 每日輸入與執行建議</h2><p>上傳方舟系統截圖，自動識別淨值、折溢價、位階股數與位階佈局金額。</p></div><div class="button-row"><button id="addEtfBtn" class="button secondary" type="button">新增 ETF</button><button id="sampleBtn" class="button ghost" type="button">載入範例</button></div></div>
+    <details class="card etf-section collapsible-section">
+      <summary class="collapsible-section-head"><span><strong>動態 ETF 清單布局</strong><small>上傳方舟系統截圖，自動識別淨值、折溢價、位階股數與位階佈局金額。</small></span><span class="collapsible-section-meta"><i aria-hidden="true"></i></span></summary>
+      <div class="collapsible-section-body">
+      <div class="section-head wrap collapsible-actions"><span></span><div class="button-row"><button id="addEtfBtn" class="button secondary" type="button">新增 ETF</button><button id="sampleBtn" class="button ghost" type="button">載入範例</button></div></div>
       <section class="ocr-import" aria-labelledby="ocrTitle">
         <div class="ocr-copy"><div><h3 id="ocrTitle">從方舟截圖匯入</h3><p>一次可選 1–2 張。圖片只在這台裝置上辨識，不會上傳到第三方。</p></div><span class="badge neutral">本機 OCR</span></div>
         <div class="ocr-actions">
@@ -129,7 +133,8 @@
       </section>
       <div id="etfCards" class="etf-grid"></div>
       <div class="reconciliation"><span>全域目標執行金額</span><strong id="globalBudget">—</strong><span>最終委託總額</span><strong id="orderTotal">—</strong><span>未配置金額</span><strong id="unallocated">—</strong></div>
-    </section>
+      </div>
+    </details>
 
     <section class="bottom-grid">
       <article class="card research-card"><div class="section-head"><div><h2>今年方舟水位研究</h2><p>年度分布、80%以上／64%以下紀錄，以及連續極端水位事件</p></div><span id="arkLevelCount" class="badge warning">讀取中</span></div><div id="arkLevelRecords" class="ark-level-records"><p class="note">正在讀取今年紀錄…</p></div></article>
