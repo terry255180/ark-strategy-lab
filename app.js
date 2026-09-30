@@ -312,6 +312,7 @@ function mergeOcrRows(rows){
     let nav=row.nav===null||row.nav===undefined?NaN:Number(row.nav),shares=row.arkShares===null||row.arkShares===undefined?NaN:Number(row.arkShares),capital=row.positionCapital===null||row.positionCapital===undefined?NaN:Number(row.positionCapital);
     if(nav>=1000) nav=nav/100; if(!Number.isFinite(nav)||nav<5||nav>1000) nav=null;
     if(!Number.isInteger(shares)||shares<0||shares>20) shares=null;
+    if(Number.isFinite(nav)&&Number.isFinite(capital)&&capital>=0){const inferred=Math.round(capital/nav),inferredDifference=Math.abs(nav*inferred-capital),ocrDifference=Number.isFinite(shares)?Math.abs(nav*shares-capital):Infinity,strictTolerance=Math.max(2,nav*.08),conflictTolerance=Math.max(2,nav+2);if(inferred>=0&&inferred<=20&&inferredDifference<=strictTolerance&&(shares===null||ocrDifference>conflictTolerance))shares=inferred;}
     if(shares===0&&!Number.isFinite(capital)) capital=0;
     if(!Number.isFinite(capital)||capital<0||capital>20000) capital=null;
     let riskShares=finiteOrNull(row.riskShares),riskAmount=finiteOrNull(row.riskAmount);
@@ -480,7 +481,9 @@ function runSelfTests(){ const tests=[]; const test=(name,fn)=>{try{tests.push([
   test("連續極端日期會合併成事件",()=>{const rows=getAnnualArkRecords([{date:"2026-01-01",arkAllocation:81,taiwanIndex:100},{date:"2026-01-02",arkAllocation:82,taiwanIndex:102},{date:"2026-01-03",arkAllocation:79,taiwanIndex:101}],2026),events=buildArkLevelEvents(rows);return events.length===1&&events[0].duration===2&&events[0].extreme.arkAllocation===82&&events[0].exit.date==="2026-01-03";});
   test("辨識幾列就保留幾列，不自動補ETF",()=>mergeOcrRows([]).length===0&&mergeOcrRows([{symbol:"0050",nav:100,arkShares:1,positionCapital:100}]).length===1);
   test("影像原始金額不被策略層重寫",()=>mergeOcrRows([{symbol:"00631L",nav:37.62,arkShares:3,positionCapital:999}])[0].positionCapital===999);
-  test("不以布局金額猜測或改寫股數",()=>mergeOcrRows([{symbol:"0056",nav:56.93,arkShares:7,positionCapital:57}])[0].arkShares===7);
+  test("已辨識且與布局金額吻合的股數不改寫",()=>mergeOcrRows([{symbol:"0056",nav:56.93,arkShares:1,positionCapital:57}])[0].arkShares===1);
+  test("手機誤讀且與布局金額衝突的股數會校正",()=>mergeOcrRows([{symbol:"0056",nav:56.93,arkShares:7,positionCapital:57}])[0].arkShares===1);
+  test("手機漏讀位階股數時可由吻合金額補回",()=>mergeOcrRows([{symbol:"0056",nav:56.8,arkShares:null,positionCapital:57}])[0].arkShares===1);
   test("OCR 代碼單字元誤差可校正",()=>extractKnownOcrSymbol("00651L")==="00631L");
   test("市場接近區間高檔且指標偏熱會預測高點",()=>predictMarketPosition([{taiwanIndex:90},{taiwanIndex:92},{taiwanIndex:94},{taiwanIndex:96},{taiwanIndex:100}],{todayArk:70,cnn:75,rsi:72}).value==="HIGH");
   test("市場接近區間低檔且 ARK 高水位會預測低點",()=>predictMarketPosition([{taiwanIndex:100},{taiwanIndex:98},{taiwanIndex:96},{taiwanIndex:94},{taiwanIndex:90}],{todayArk:82,cnn:50,rsi:50}).value==="LOW");
