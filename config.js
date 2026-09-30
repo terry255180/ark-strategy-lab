@@ -1,5 +1,23 @@
 window.CONFIG = Object.freeze({
-  strategyVersion: "V1.2",
+  strategyVersion: "BUY_ENGINE_V2.0",
+  buyEngineV2: Object.freeze({
+    status: "HEURISTIC · NOT BACKTEST OPTIMIZED",
+    deadband: 1,
+    gapFillRates: Object.freeze({large:.10,medium:.12,small:.15}),
+    gapBands: Object.freeze({large:20,medium:10}),
+    trendFactors: Object.freeze({strongRise:1.15,rise:1.10,stable:1,mildFall:.85,clearFall:.60,strongRiseAt:2,riseAt:.5,mildFallAt:-2}),
+    marketFactors: Object.freeze({favorable:1.15,normal:1,hot:.80}),
+    minDynamicScale: 1,
+    maxDynamicScale: 5,
+    minETFExecution: 500,
+    minDailyExecution: 5000,
+    amountTolerance: 2,
+    premium: Object.freeze({nav:.10,normal:.50,urgent:1.25,hardCap:2.50}),
+    concentration: Object.freeze({singleSoft:.10,singleHard:.15,groupSoft:.25,groupHard:.40,leveragedSoft:.08,leveragedHard:.12,reducedFactor:.50}),
+    extreme: Object.freeze({activateScore:6,mediumScore:7,highScore:8,maxScore:9,fillRates:Object.freeze({low:.30,medium:.50,high:.70,max:.90}),cnn:20,arkTarget:80,arkRise1D:1,rsi:30,bias20D:-5,percentile:20,drawdown:-5,margin:150,vix:30}),
+    storageKeys: Object.freeze({pending:"arkStrategyLab.execution.pending.v2",confirmedArk:"arkStrategyLab.arkDaily.v2"})
+  }),
+  imageImport: Object.freeze({provider:"OCRFallbackProvider",maxScreenshots:5,visionEndpoint:"",requireUserConfirmation:true}),
   rebalance: {
     strategyVersion: "REBALANCE_V1.0", status: "HEURISTIC · NOT BACKTEST OPTIMIZED",
     usCnnBands: [{max:25,factor:.60,label:"極度恐懼"},{max:40,factor:.80,label:"恐懼"},{max:60,factor:1,label:"中性"},{max:75,factor:1.15,label:"偏熱"},{max:100,factor:1.30,label:"過熱"}],
