@@ -312,6 +312,7 @@ function mergeOcrRows(rows){
     if(shares===0&&!Number.isFinite(capital)) capital=0;
     if(!Number.isFinite(capital)||capital<0||capital>20000) capital=null;
     let riskShares=finiteOrNull(row.riskShares),riskAmount=finiteOrNull(row.riskAmount);
+    if(Number.isFinite(nav)&&Number.isInteger(riskShares)&&riskShares>0&&riskAmount!==null&&riskShares*nav<riskAmount*.5){const expectedDigits=String(Math.max(1,Math.round(riskAmount/nav))).length,lastDigit=riskShares%10;let repeated=riskShares;while(String(repeated).length<expectedDigits)repeated=repeated*10+lastDigit;const tolerance=Math.max(nav+2,nav*1.25,riskAmount*.015);if(Math.abs(nav*repeated-riskAmount)<=tolerance)riskShares=repeated;}
     if(Number.isFinite(nav)&&Number.isInteger(riskShares)&&riskShares%10===5&&riskAmount!==null){const alternate=riskShares-2,currentDiff=Math.abs(nav*riskShares-riskAmount),alternateDiff=Math.abs(nav*alternate-riskAmount);if(alternateDiff+nav*.5<currentDiff)riskShares=alternate;}
     return {...row,name:ETF_NAME_BY_SYMBOL[row.symbol]||row.name,nav:Number.isFinite(nav)?round(nav,2):null,premium:finiteOrNull(row.premium),arkShares:Number.isFinite(shares)?shares:null,positionCapital:Number.isFinite(capital)?capital:null,riskShares,riskAmount};
   });
@@ -358,6 +359,7 @@ async function recognizeArkScreenshots(){
       try{
         prepared=await prepareOcrImage(ocrFiles[i]);
         numericCrop=mobile?prepareMobileNumericCrop(prepared):null;
+        await worker.setParameters(mobile?{tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT,preserve_interword_spaces:"1",tessedit_char_whitelist:"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.,+-%"}:{tessedit_pageseg_mode:Tesseract.PSM.AUTO,preserve_interword_spaces:"1",tessedit_char_whitelist:""});
         const result=await worker.recognize(numericCrop?.image||prepared.image,{}, {text:true,blocks:true}),rawWords=flattenOcrWords(result.data.blocks),baseWords=numericCrop?offsetOcrWords(rawWords,numericCrop.x):rawWords;
         const leftWords=await recognizeOcrColumn(worker,prepared,0,.34,"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZL"),middleWords=await recognizeOcrColumn(worker,prepared,.28,.60,"0123456789.,+-%"),rightWords=await recognizeOcrColumn(worker,prepared,.55,1,"0123456789,."),allWords=[...baseWords,...leftWords,...middleWords,...rightWords],gridRows=parseArkScreenshotGrid(allWords,prepared.width,prepared.height),detectedRows=parseArkScreenshotWords(allWords,prepared.width),wordRows=recoverPremiumsByPosition(allWords,prepared.width,detectedRows),fallbackRows=[...wordRows,...parseArkScreenshotText(result.data.text)],rows=gridRows.length?gridRows:fallbackRows;
         const mergedImage=mergeOcrRows(rows);found.push(...mergedImage);imageExtractions.push({items:mergedImage.map(row=>({...row,premiumPercent:row.premium,positionShares:row.arkShares,positionAmount:row.positionCapital}))});imageResults.push(mergedImage.length);
