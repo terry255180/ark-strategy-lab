@@ -323,7 +323,7 @@ function mergeOcrRows(rows){
 function finiteOrNull(value){return value!==null&&value!==""&&Number.isFinite(Number(value))?Number(value):null;}
 const isMobileOcrDevice=()=>/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)||matchMedia("(pointer: coarse)").matches;
 async function prepareOcrImage(file){
-  const bitmap=await createImageBitmap(file),mobile=isMobileOcrDevice(),maxWidth=mobile?1500:1800,maxPixels=mobile?3800000:7000000,scale=Math.min(mobile?1.35:2,maxWidth/bitmap.width,Math.sqrt(maxPixels/(bitmap.width*bitmap.height))),canvas=document.createElement("canvas");
+  const bitmap=await createImageBitmap(file),maxWidth=1800,maxPixels=7000000,scale=Math.min(2,maxWidth/bitmap.width,Math.sqrt(maxPixels/(bitmap.width*bitmap.height))),canvas=document.createElement("canvas");
   canvas.width=Math.round(bitmap.width*scale); canvas.height=Math.round(bitmap.height*scale);
   const context=canvas.getContext("2d"); context.drawImage(bitmap,0,0,canvas.width,canvas.height); bitmap.close();
   return {image:canvas,width:canvas.width,height:canvas.height};
@@ -352,17 +352,17 @@ async function recognizeArkScreenshots(){
   try{
     const configuredVision=(CONFIG.imageImport.provider==="OpenAIVisionProvider"&&window.openAIVisionExtractor)||(CONFIG.imageImport.provider==="GeminiVisionProvider"&&window.geminiVisionExtractor);
     if(configuredVision){const extraction=await window.BuyEngineV2.extractArkImageData(createImageDataProvider(),ocrFiles);ocrRows=(extraction.items||[]).map(row=>({...row,premium:row.premiumPercent,arkShares:row.positionShares,positionCapital:row.positionAmount}));renderImageReview();$("ocrProgressBar").style.width="100%";$("ocrStatus").textContent=`Vision 已讀取 ${ocrRows.length} 檔 ETF，請核對後確認。`;return;}
-    const mobile=isMobileOcrDevice(),languages=mobile?["eng"]:["chi_tra","eng"];
+    const mobile=isMobileOcrDevice(),languages=["chi_tra","eng"];
     worker=await Tesseract.createWorker(languages,Tesseract.OEM.LSTM_ONLY,{workerPath:"vendor/tesseract/worker.min.js",langPath:"vendor/tesseract/lang",corePath:"vendor/tesseract",logger:message=>{ if(message.progress!==undefined){ const progress=Math.round((message.progress*.75)*100); $("ocrProgressBar").style.width=`${Math.max(2,progress)}%`; $("ocrStatus").textContent=`${message.status==="recognizing text"?"辨識文字":"準備模型"}… ${Math.round(message.progress*100)}%`; } }});
-    await worker.setParameters(mobile?{tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT,preserve_interword_spaces:"1",tessedit_char_whitelist:"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.,+-%"}:{tessedit_pageseg_mode:Tesseract.PSM.AUTO,preserve_interword_spaces:"1"});
+    await worker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.AUTO,preserve_interword_spaces:"1",tessedit_char_whitelist:""});
     const found=[],imageExtractions=[],imageResults=[],failures=[];
     for(let i=0;i<ocrFiles.length;i++){
       $("ocrStatus").textContent=`正在辨識第 ${i+1} / ${ocrFiles.length} 張…`;
       let prepared,numericCrop;
       try{
         prepared=await prepareOcrImage(ocrFiles[i]);
-        numericCrop=mobile?prepareMobileNumericCrop(prepared):null;
-        await worker.setParameters(mobile?{tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT,preserve_interword_spaces:"1",tessedit_char_whitelist:"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.,+-%"}:{tessedit_pageseg_mode:Tesseract.PSM.AUTO,preserve_interword_spaces:"1",tessedit_char_whitelist:""});
+        numericCrop=null;
+        await worker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.AUTO,preserve_interword_spaces:"1",tessedit_char_whitelist:""});
         const result=await worker.recognize(numericCrop?.image||prepared.image,{}, {text:true,blocks:true}),rawWords=flattenOcrWords(result.data.blocks),baseWords=numericCrop?offsetOcrWords(rawWords,numericCrop.x):rawWords;
         const leftWords=await recognizeOcrColumn(worker,prepared,0,.34,"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZL"),middleWords=await recognizeOcrColumn(worker,prepared,.28,.60,"0123456789.,+-%"),rightWords=await recognizeOcrColumn(worker,prepared,.55,1,"0123456789,."),allWords=[...baseWords,...leftWords,...middleWords,...rightWords],gridRows=parseArkScreenshotGrid(allWords,prepared.width,prepared.height),detectedRows=parseArkScreenshotWords(allWords,prepared.width),wordRows=recoverPremiumsByPosition(allWords,prepared.width,detectedRows),fallbackRows=[...wordRows,...parseArkScreenshotText(result.data.text)],rows=gridRows.length?gridRows:fallbackRows;
         const mergedImage=mergeOcrRows(rows);found.push(...mergedImage);imageExtractions.push({items:mergedImage.map(row=>({...row,premiumPercent:row.premium,positionShares:row.arkShares,positionAmount:row.positionCapital}))});imageResults.push(mergedImage.length);
