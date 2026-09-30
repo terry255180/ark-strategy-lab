@@ -264,7 +264,7 @@ function parseArkScreenshotGrid(words,imageWidth,imageHeight){
     const shareWords=normalized.filter(word=>word.cx>=imageWidth*.58&&word.cx<imageWidth*.80&&cleanOcrNumber(word.text)!==null),capitalWords=normalized.filter(word=>word.cx>=imageWidth*.80&&word.cx<=imageWidth*1.02&&cleanOcrNumber(word.text)!==null),lineTolerance=Math.max(38,Math.min(70,rowSpacing*.22));
     const positionShare=nearest(shareWords,navWord.cy,lineTolerance),positionAmount=nearest(capitalWords,navWord.cy,lineTolerance),riskShare=nearest(shareWords,premiumWord.cy,lineTolerance),riskAmount=nearest(capitalWords,premiumWord.cy,lineTolerance);
     const bothPositionMissing=!positionShare&&!positionAmount&&riskShare&&riskAmount;
-    return {symbol:symbolWord.symbol,name:ETF_NAME_BY_SYMBOL[symbolWord.symbol]||"",nav:cleanOcrNumber(navWord.text),premium:cleanOcrNumber(premiumWord.text),arkShares:bothPositionMissing?0:(positionShare?cleanOcrNumber(positionShare.text):null),positionCapital:bothPositionMissing?0:(positionAmount?cleanOcrNumber(positionAmount.text):null),riskShares:riskShare?cleanOcrNumber(riskShare.text):null,riskAmount:riskAmount?cleanOcrNumber(riskAmount.text):null};
+    return {symbol:symbolWord.symbol,name:ETF_NAME_BY_SYMBOL[symbolWord.symbol]||"",nav:cleanOcrNumber(navWord.text),premium:cleanOcrNumber(premiumWord.text),arkShares:bothPositionMissing?0:(positionShare?cleanOcrNumber(positionShare.text):null),positionCapital:bothPositionMissing?0:(positionAmount?cleanOcrNumber(positionAmount.text):null),riskShares:riskShare?cleanOcrNumber(riskShare.text):null,riskAmount:riskAmount?cleanOcrNumber(riskAmount.text):null,_navCy:navWord.cy,_rowSpacing:rowSpacing};
   }).filter(Boolean);
 }
 function parseArkScreenshotText(text){
@@ -312,7 +312,7 @@ function mergeOcrRows(rows){
     let nav=row.nav===null||row.nav===undefined?NaN:Number(row.nav),shares=row.arkShares===null||row.arkShares===undefined?NaN:Number(row.arkShares),capital=row.positionCapital===null||row.positionCapital===undefined?NaN:Number(row.positionCapital);
     if(nav>=1000) nav=nav/100; if(!Number.isFinite(nav)||nav<5||nav>1000) nav=null;
     if(!Number.isInteger(shares)||shares<0||shares>20) shares=null;
-    if(Number.isFinite(nav)&&Number.isFinite(capital)&&capital>=0){const inferred=Math.round(capital/nav),inferredDifference=Math.abs(nav*inferred-capital),ocrDifference=Number.isFinite(shares)?Math.abs(nav*shares-capital):Infinity,strictTolerance=Math.max(2,nav*.08),conflictTolerance=Math.max(2,nav+2);if(inferred>=0&&inferred<=20&&inferredDifference<=strictTolerance&&(shares===null||ocrDifference>conflictTolerance))shares=inferred;}
+    if(Number.isFinite(nav)&&Number.isFinite(capital)&&capital>=0){const inferred=Math.round(capital/nav),inferredDifference=Math.abs(nav*inferred-capital),ocrDifference=Number.isFinite(shares)?Math.abs(nav*shares-capital):Infinity,strictTolerance=Math.max(2,nav*.08),conflictTolerance=Math.max(2,nav+2);if(inferred>=0&&inferred<=20&&inferredDifference<=strictTolerance&&(shares===null||ocrDifference>conflictTolerance)){shares=inferred;if(inferred===0)capital=0;}}
     if(shares===0&&!Number.isFinite(capital)) capital=0;
     if(!Number.isFinite(capital)||capital<0||capital>20000) capital=null;
     let riskShares=finiteOrNull(row.riskShares),riskAmount=finiteOrNull(row.riskAmount);
@@ -335,6 +335,15 @@ async function recognizeOcrColumn(worker,prepared,minX,maxX,whitelist){
   const x=Math.round(prepared.width*minX),width=Math.round(prepared.width*maxX)-x,canvas=document.createElement("canvas");canvas.width=width;canvas.height=prepared.height;canvas.getContext("2d").drawImage(prepared.image,x,0,width,prepared.height,0,0,width,prepared.height);
   await worker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT,preserve_interword_spaces:"1",tessedit_char_whitelist:whitelist});
   try{const result=await worker.recognize(canvas,{}, {text:false,blocks:true});return offsetOcrWords(flattenOcrWords(result.data.blocks),x);}finally{canvas.width=1;canvas.height=1;}
+}
+async function recognizeOcrCell(worker,prepared,minX,maxX,centerY,halfHeight=60){
+  const x=Math.round(prepared.width*minX),y=Math.max(0,Math.round(centerY-halfHeight)),width=Math.round(prepared.width*maxX)-x,height=Math.min(prepared.height-y,Math.round(halfHeight*2)),canvas=document.createElement("canvas");canvas.width=width*2;canvas.height=height*2;const context=canvas.getContext("2d");context.imageSmoothingEnabled=false;context.drawImage(prepared.image,x,y,width,height,0,0,canvas.width,canvas.height);
+  await worker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.SINGLE_WORD,preserve_interword_spaces:"1",tessedit_char_whitelist:"0123456789,"});
+  try{const result=await worker.recognize(canvas,{}, {text:true,blocks:false}),matches=String(result.data.text||"").match(/[\d,]+/g)||[];return matches.length?cleanOcrNumber(matches.sort((a,b)=>b.length-a.length)[0]):null;}finally{canvas.width=1;canvas.height=1;}
+}
+async function repairEssentialOcrCells(worker,prepared,rows){
+  for(const row of rows){if(!Number.isFinite(row._navCy))continue;const halfHeight=Math.max(42,Math.min(72,(row._rowSpacing||240)*.22));if(row.arkShares===null)row.arkShares=await recognizeOcrCell(worker,prepared,.58,.80,row._navCy,halfHeight);if(row.positionCapital===null)row.positionCapital=await recognizeOcrCell(worker,prepared,.80,1,row._navCy,halfHeight);if(row.arkShares===null&&row.positionCapital===null){row.arkShares=0;row.positionCapital=0;}if(row.arkShares===0&&row.positionCapital===null)row.positionCapital=0;if(row.positionCapital===0&&row.arkShares===null)row.arkShares=0;}
+  return rows;
 }
 function renderOcrReview(){
   const validation=window.BuyEngineV2.validateArkImageData({items:ocrRows});$("ocrReview").hidden=!ocrRows.length;
@@ -365,7 +374,7 @@ async function recognizeArkScreenshots(){
         numericCrop=null;
         await worker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.AUTO,preserve_interword_spaces:"1",tessedit_char_whitelist:""});
         const result=await worker.recognize(numericCrop?.image||prepared.image,{}, {text:true,blocks:true}),rawWords=flattenOcrWords(result.data.blocks),baseWords=numericCrop?offsetOcrWords(rawWords,numericCrop.x):rawWords;
-        const leftWords=await recognizeOcrColumn(worker,prepared,0,.34,"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZL"),middleWords=await recognizeOcrColumn(worker,prepared,.28,.60,"0123456789.,+-%"),rightWords=await recognizeOcrColumn(worker,prepared,.55,1,"0123456789,."),allWords=[...baseWords,...leftWords,...middleWords,...rightWords],gridRows=parseArkScreenshotGrid(allWords,prepared.width,prepared.height),detectedRows=parseArkScreenshotWords(allWords,prepared.width),wordRows=recoverPremiumsByPosition(allWords,prepared.width,detectedRows),fallbackRows=[...wordRows,...parseArkScreenshotText(result.data.text)],rows=gridRows.length?gridRows:fallbackRows;
+        const leftWords=await recognizeOcrColumn(worker,prepared,0,.34,"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZL"),middleWords=await recognizeOcrColumn(worker,prepared,.28,.60,"0123456789.,+-%"),rightWords=await recognizeOcrColumn(worker,prepared,.55,1,"0123456789,."),allWords=[...baseWords,...leftWords,...middleWords,...rightWords],gridRows=parseArkScreenshotGrid(allWords,prepared.width,prepared.height),detectedRows=parseArkScreenshotWords(allWords,prepared.width),wordRows=recoverPremiumsByPosition(allWords,prepared.width,detectedRows),fallbackRows=[...wordRows,...parseArkScreenshotText(result.data.text)];if(gridRows.length)await repairEssentialOcrCells(worker,prepared,gridRows);const rows=gridRows.length?gridRows:fallbackRows;
         const mergedImage=mergeOcrRows(rows);found.push(...mergedImage);imageExtractions.push({items:mergedImage.map(row=>({...row,premiumPercent:row.premium,positionShares:row.arkShares,positionAmount:row.positionCapital}))});imageResults.push(mergedImage.length);
       }catch(imageError){ console.error(imageError); failures.push(i+1); imageResults.push(0); }
       finally{ if(numericCrop?.image){numericCrop.image.width=1;numericCrop.image.height=1;} if(prepared?.image){prepared.image.width=1;prepared.image.height=1;} }
@@ -484,6 +493,7 @@ function runSelfTests(){ const tests=[]; const test=(name,fn)=>{try{tests.push([
   test("已辨識且與布局金額吻合的股數不改寫",()=>mergeOcrRows([{symbol:"0056",nav:56.93,arkShares:1,positionCapital:57}])[0].arkShares===1);
   test("手機誤讀且與布局金額衝突的股數會校正",()=>mergeOcrRows([{symbol:"0056",nav:56.93,arkShares:7,positionCapital:57}])[0].arkShares===1);
   test("手機漏讀位階股數時可由吻合金額補回",()=>mergeOcrRows([{symbol:"0056",nav:56.8,arkShares:null,positionCapital:57}])[0].arkShares===1);
+  test("手機將零布局金額誤讀成極小值時校正為0股0元",()=>{const row=mergeOcrRows([{symbol:"0057",nav:332.03,arkShares:null,positionCapital:5}])[0];return row.arkShares===0&&row.positionCapital===0;});
   test("OCR 代碼單字元誤差可校正",()=>extractKnownOcrSymbol("00651L")==="00631L");
   test("市場接近區間高檔且指標偏熱會預測高點",()=>predictMarketPosition([{taiwanIndex:90},{taiwanIndex:92},{taiwanIndex:94},{taiwanIndex:96},{taiwanIndex:100}],{todayArk:70,cnn:75,rsi:72}).value==="HIGH");
   test("市場接近區間低檔且 ARK 高水位會預測低點",()=>predictMarketPosition([{taiwanIndex:100},{taiwanIndex:98},{taiwanIndex:96},{taiwanIndex:94},{taiwanIndex:90}],{todayArk:82,cnn:50,rsi:50}).value==="LOW");
