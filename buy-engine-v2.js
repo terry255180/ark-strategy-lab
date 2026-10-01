@@ -18,7 +18,8 @@ const ETF_MASTER=Object.freeze({
   "0057":{name:"富邦摩台",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_LARGE_CAP",leveraged:false},
   "00830":{name:"國泰費城半導體",marketRegion:"US",assetType:"US_EQUITY",exposureGroup:"US_SEMICONDUCTOR",leveraged:false},
   "00910":{name:"第一金太空衛星",marketRegion:"GLOBAL",assetType:"GLOBAL_EQUITY",exposureGroup:"GLOBAL_THEME",leveraged:false},
-  "00920":{name:"富邦ESG綠色電力",marketRegion:"GLOBAL",assetType:"GLOBAL_EQUITY",exposureGroup:"GLOBAL_THEME",leveraged:false}
+  "00920":{name:"富邦ESG綠色電力",marketRegion:"GLOBAL",assetType:"GLOBAL_EQUITY",exposureGroup:"GLOBAL_THEME",leveraged:false},
+  "00988A":{name:"主動統一全球創新",marketRegion:"GLOBAL",assetType:"GLOBAL_EQUITY",exposureGroup:"GLOBAL_TECH",leveraged:false}
 });
 const fieldAliases={premiumPercent:["premiumPercent","premium"],positionShares:["positionShares","arkShares"],positionAmount:["positionAmount","positionCapital"]};
 function value(row,key){for(const k of fieldAliases[key]||[key])if(row[k]!==undefined)return finite(row[k]);return null;}
@@ -61,6 +62,7 @@ function runBuyEngineSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push(
 test("圖片只有9檔，不生成第10檔",()=>validateArkImageData({items:golden}).detectedRows===9);
 test("0股與0元合法",()=>!validateArkImageData({items:[golden[4]]}).items[0].validation.errors.length);
 test("未使用的NAV與風控欄位不產生警告",()=>validateArkImageData({items:[{symbol:'0056',premiumPercent:.2,positionShares:1,positionAmount:57}]}).items[0].validation.status==="VALIDATED");
+test("00988A能補入完整股票名稱",()=>normalizeItem({symbol:'00988A'}).name==="主動統一全球創新");
 test("NAV×7≈155通過",()=>amountPass(22.09,7,155));
 test("NAV×70與155衝突",()=>amountPass(22.09,70,155)===false);
 test("Gap 0.8% HOLD",()=>calculateBaseGapFillRate(.8)===0);
