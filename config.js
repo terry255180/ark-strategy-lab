@@ -17,7 +17,7 @@ window.CONFIG = Object.freeze({
     extreme: Object.freeze({activateScore:6,mediumScore:7,highScore:8,maxScore:9,fillRates:Object.freeze({low:.30,medium:.50,high:.70,max:.90}),cnn:20,arkTarget:80,arkRise1D:1,rsi:30,bias20D:-5,percentile:20,drawdown:-5,margin:150,vix:30}),
     storageKeys: Object.freeze({pending:"arkStrategyLab.execution.pending.v2",confirmedArk:"arkStrategyLab.arkDaily.v2"})
   }),
-  imageImport: Object.freeze({provider:"GeminiVisionProvider",maxScreenshots:5,visionEndpoint:"",requireUserConfirmation:true}),
+  imageImport: Object.freeze({provider:"GeminiVisionProvider",maxScreenshots:5,visionEndpoint:"https://script.google.com/macros/s/AKfycby_pcukAJMHn-Z_yzeCPqDc35QbSotwAQX0GrMl9i6uSj-JFz_X4DGHxkiSgM7zrK7BNg/exec",requireUserConfirmation:true}),
   rebalance: {
     strategyVersion: "REBALANCE_V1.0", status: "HEURISTIC · NOT BACKTEST OPTIMIZED",
     usCnnBands: [{max:25,factor:.60,label:"極度恐懼"},{max:40,factor:.80,label:"恐懼"},{max:60,factor:1,label:"中性"},{max:75,factor:1.15,label:"偏熱"},{max:100,factor:1.30,label:"過熱"}],
