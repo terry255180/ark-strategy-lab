@@ -224,6 +224,7 @@ function ocrEditDistance(a,b){const row=Array.from({length:b.length+1},(_,i)=>i)
 function extractKnownOcrSymbol(value){
   const cleaned=cleanOcrSymbol(value);
   const symbols=Object.keys(window.BuyEngineV2.ETF_MASTER).sort((a,b)=>b.length-a.length),exact=symbols.find(symbol=>cleaned.includes(symbol));if(exact)return exact;
+  const missingSuffix=symbols.filter(symbol=>symbol.length===cleaned.length+1&&symbol.startsWith(cleaned));if(missingSuffix.length===1)return missingSuffix[0];
   if(/^0\d{3,5}[A-Z]?$/.test(cleaned)){const near=symbols.filter(symbol=>symbol.length===cleaned.length&&ocrEditDistance(symbol,cleaned)===1);if(near.length===1)return near[0];return cleaned;}
   return "";
 }
@@ -501,6 +502,7 @@ function runSelfTests(){ const tests=[]; const test=(name,fn)=>{try{tests.push([
   test("手機漏讀位階股數時可由吻合金額補回",()=>mergeOcrRows([{symbol:"0056",nav:56.8,arkShares:null,positionCapital:57}])[0].arkShares===1);
   test("手機將零布局金額誤讀成極小值時校正為0股0元",()=>{const row=mergeOcrRows([{symbol:"0057",nav:332.03,arkShares:null,positionCapital:5}])[0];return row.arkShares===0&&row.positionCapital===0;});
   test("OCR 代碼單字元誤差可校正",()=>extractKnownOcrSymbol("00651L")==="00631L");
+  test("OCR 漏掉槓桿ETF尾碼可校正",()=>extractKnownOcrSymbol("00631")==="00631L");
   test("市場接近區間高檔且指標偏熱會預測高點",()=>predictMarketPosition([{taiwanIndex:90},{taiwanIndex:92},{taiwanIndex:94},{taiwanIndex:96},{taiwanIndex:100}],{todayArk:70,cnn:75,rsi:72}).value==="HIGH");
   test("市場接近區間低檔且 ARK 高水位會預測低點",()=>predictMarketPosition([{taiwanIndex:100},{taiwanIndex:98},{taiwanIndex:96},{taiwanIndex:94},{taiwanIndex:90}],{todayArk:82,cnn:50,rsi:50}).value==="LOW");
   const v2=window.BuyEngineV2.runBuyEngineSelfTests();v2.tests.forEach(x=>tests.push([`BUY V2 · ${x.name}`,x.ok]));const passed=tests.filter(t=>t[1]).length; $("selfTestBadge").textContent=`${passed} / ${tests.length} 通過`; $("selfTestBadge").className=`badge ${passed===tests.length?"buy":"sell"}`; $("selfTestList").innerHTML=tests.map(([n,ok])=>`<li>${ok?"通過":"失敗"} · ${n}</li>`).join(""); return {passed,total:tests.length,tests}; }
