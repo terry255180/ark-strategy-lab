@@ -17,7 +17,7 @@ window.CONFIG = Object.freeze({
     extreme: Object.freeze({activateScore:6,mediumScore:7,highScore:8,maxScore:9,fillRates:Object.freeze({low:.30,medium:.50,high:.70,max:.90}),cnn:20,arkTarget:80,arkRise1D:1,rsi:30,bias20D:-5,percentile:20,drawdown:-5,margin:150,vix:30}),
     storageKeys: Object.freeze({pending:"arkStrategyLab.execution.pending.v2",confirmedArk:"arkStrategyLab.arkDaily.v2"})
   }),
-  imageImport: Object.freeze({provider:"OCRFallbackProvider",maxScreenshots:5,visionEndpoint:"",requireUserConfirmation:true}),
+  imageImport: Object.freeze({provider:"GeminiVisionProvider",maxScreenshots:5,visionEndpoint:"",requireUserConfirmation:true}),
   rebalance: {
     strategyVersion: "REBALANCE_V1.0", status: "HEURISTIC · NOT BACKTEST OPTIMIZED",
     usCnnBands: [{max:25,factor:.60,label:"極度恐懼"},{max:40,factor:.80,label:"恐懼"},{max:60,factor:1,label:"中性"},{max:75,factor:1.15,label:"偏熱"},{max:100,factor:1.30,label:"過熱"}],
@@ -55,6 +55,7 @@ window.CONFIG = Object.freeze({
     state: "arkStrategyLab.state.v1",
     history: "arkStrategyLab.history.v1",
     etfs: "arkStrategyLab.etfs.v1",
-    cache: "arkStrategyLab.centralCache.v2"
+    cache: "arkStrategyLab.centralCache.v2",
+    visionToken: "arkStrategyLab.visionToken.v1"
   }
 });

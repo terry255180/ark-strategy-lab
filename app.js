@@ -211,6 +211,17 @@ function parseETFData(text) {
 let ocrFiles=[];
 let ocrObjectUrls=[];
 let ocrRows=[];
+function fileToBase64Payload(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>{const [header,data]=String(reader.result||"").split(",",2);resolve({mimeType:(header.match(/^data:([^;]+)/)||[])[1]||file.type||"image/jpeg",data});};reader.onerror=()=>reject(new Error(`無法讀取圖片：${file.name}`));reader.readAsDataURL(file);});}
+async function extractWithGeminiVision(images){
+  const endpoint=CONFIG.imageImport.visionEndpoint||CONFIG.googleSheets?.webAppUrl,token=$("visionAccessToken")?.value.trim();
+  if(!endpoint)throw new Error("尚未設定 Gemini Apps Script 端點");
+  if(!token)throw new Error("請先輸入 AI 辨識密碼");
+  const payloadImages=await Promise.all((images||[]).map(fileToBase64Payload)),response=await fetch(endpoint,{method:"POST",redirect:"follow",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"vision",token,images:payloadImages})});
+  if(!response.ok)throw new Error(`Gemini 服務 HTTP ${response.status}`);
+  const payload=await response.json();if(!payload.ok)throw new Error(payload.error||"Gemini 圖片辨識失敗");
+  return {detectedRows:(payload.items||[]).length,items:payload.items||[],provider:payload.provider||"gemini"};
+}
+window.geminiVisionExtractor=extractWithGeminiVision;
 function createImageDataProvider(fallbackExtractor){const providers=window.BuyEngineV2,name=CONFIG.imageImport.provider;if(name==="OpenAIVisionProvider"&&window.openAIVisionExtractor)return new providers.OpenAIVisionProvider(window.openAIVisionExtractor);if(name==="GeminiVisionProvider"&&window.geminiVisionExtractor)return new providers.GeminiVisionProvider(window.geminiVisionExtractor);if(name==="ManualProvider")return new providers.ManualProvider();return new providers.OCRFallbackProvider(fallbackExtractor);}
 const ETF_NAME_BY_SYMBOL=Object.fromEntries(Object.entries(window.BuyEngineV2.ETF_MASTER).map(([symbol,item])=>[symbol,item.name]));
 const escapeHtml=(value)=>String(value??"").replace(/[&<>"]/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[char]));
@@ -379,7 +390,7 @@ async function recognizeArkScreenshots(){
   let worker;
   try{
     const configuredVision=(CONFIG.imageImport.provider==="OpenAIVisionProvider"&&window.openAIVisionExtractor)||(CONFIG.imageImport.provider==="GeminiVisionProvider"&&window.geminiVisionExtractor);
-    if(configuredVision){const extraction=await window.BuyEngineV2.extractArkImageData(createImageDataProvider(),ocrFiles);ocrRows=(extraction.items||[]).map(row=>({...row,premium:row.premiumPercent,arkShares:row.positionShares,positionCapital:row.positionAmount}));renderImageReview();$("ocrProgressBar").style.width="100%";$("ocrStatus").textContent=`Vision 已讀取 ${ocrRows.length} 檔 ETF，請核對後確認。`;return;}
+    if(configuredVision){try{$("ocrStatus").textContent="正在使用 Gemini AI 分析整張表格…";const extraction=await window.BuyEngineV2.extractArkImageData(createImageDataProvider(),ocrFiles);ocrRows=(extraction.items||[]).map(row=>({...row,premium:row.premiumPercent,arkShares:row.positionShares,positionCapital:row.positionAmount}));renderImageReview();$("ocrProgressBar").style.width="100%";$("ocrStatus").textContent=`Gemini AI 已辨識 ${ocrRows.length} 檔 ETF，請核對後套用。`;return;}catch(visionError){console.warn("Gemini Vision fallback",visionError);$("ocrStatus").textContent=`Gemini 暫時無法使用（${String(visionError?.message||visionError).slice(0,80)}），正在改用本機 OCR…`;}}
     const mobile=isMobileOcrDevice(),languages=["chi_tra","eng"];
     worker=await Tesseract.createWorker(languages,Tesseract.OEM.LSTM_ONLY,{workerPath:"vendor/tesseract/worker.min.js",langPath:"vendor/tesseract/lang",corePath:"vendor/tesseract",logger:message=>{ if(message.progress!==undefined){ const progress=Math.round((message.progress*.75)*100); $("ocrProgressBar").style.width=`${Math.max(2,progress)}%`; $("ocrStatus").textContent=`${message.status==="recognizing text"?"辨識文字":"準備模型"}… ${Math.round(message.progress*100)}%`; } }});
     await worker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.AUTO,preserve_interword_spaces:"1",tessedit_char_whitelist:""});
@@ -520,6 +531,7 @@ function runSelfTests(){ const tests=[]; const test=(name,fn)=>{try{tests.push([
 
 function saveETFs(){ localStorage.setItem(CONFIG.storageKeys.etfs,JSON.stringify(window.currentETFs)); }
 function bind(){
+  $("visionAccessToken").value=localStorage.getItem(CONFIG.storageKeys.visionToken)||"";$("visionAccessToken").addEventListener("input",event=>localStorage.setItem(CONFIG.storageKeys.visionToken,event.target.value.trim()));
   document.querySelectorAll(".inputs-card input,.inputs-card select").forEach(el=>el.addEventListener("input",renderDashboard));
   $("etfCards").addEventListener("change",(event)=>{ const el=event.target,index=Number(el.dataset.etfIndex),field=el.dataset.etfField; if(!field||!Number.isInteger(index)||!window.currentETFs[index]) return; window.currentETFs[index][field]=["nav","premium","arkShares","positionCapital","riskShares","riskAmount","currentWeight","leverage"].includes(field)?Number(el.value||0):el.value; saveETFs(); renderDashboard(); });
   $("etfCards").addEventListener("click",(event)=>{ const button=event.target.closest("[data-remove-etf]"); if(!button)return; window.currentETFs.splice(Number(button.dataset.removeEtf),1); saveETFs(); renderETFExecution(); });
