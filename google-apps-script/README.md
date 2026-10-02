@@ -18,7 +18,7 @@ Gemini API Key 與私人辨識密碼只存在 Apps Script 的「指令碼屬性�
 5. 在 Apps Script 左側選擇「專案設定」→「指令碼屬性」，新增：
    - `GEMINI_API_KEY`：步驟 4 取得的 API Key。
    - `VISION_ACCESS_TOKEN`：自行設定一組夠長、不可猜測的私人密碼。
-   - `GEMINI_MODEL`：可省略；預設為 `gemini-2.5-flash-lite`。
+   - `GEMINI_MODEL`：可省略；預設為 `gemini-3.5-flash-lite`。
    - `VISION_DAILY_LIMIT`：可省略；預設每天最多辨識 30 次。
 6. 選擇右上角「部署」→「新增部署作業」。
 7. 類型選擇「網頁應用程式」。

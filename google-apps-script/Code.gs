@@ -91,7 +91,7 @@ function analyzeArkImages_(request) {
   if (totalLength > 12000000) throw new Error('圖片總大小超過 9MB，請減少張數或使用原始截圖。');
   enforceVisionDailyLimit_(properties);
 
-  const model = properties.getProperty('GEMINI_MODEL') || 'gemini-2.5-flash-lite';
+  const model = properties.getProperty('GEMINI_MODEL') || 'gemini-3.5-flash-lite';
   const parts = [{ text: buildArkVisionPrompt_() }].concat(images.map(image => ({
     inlineData: { mimeType: image.mimeType, data: image.data }
   })));
