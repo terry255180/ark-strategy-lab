@@ -534,7 +534,7 @@ function runSelfTests(){ const tests=[]; const test=(name,fn)=>{try{tests.push([
   test("OCR 漏掉槓桿ETF尾碼可校正",()=>extractKnownOcrSymbol("00631")==="00631L");
   test("市場接近區間高檔且指標偏熱會預測高點",()=>predictMarketPosition([{taiwanIndex:90},{taiwanIndex:92},{taiwanIndex:94},{taiwanIndex:96},{taiwanIndex:100}],{todayArk:70,cnn:75,rsi:72}).value==="HIGH");
   test("市場接近區間低檔且 ARK 高水位會預測低點",()=>predictMarketPosition([{taiwanIndex:100},{taiwanIndex:98},{taiwanIndex:96},{taiwanIndex:94},{taiwanIndex:90}],{todayArk:82,cnn:50,rsi:50}).value==="LOW");
-  const v2=window.BuyEngineV2.runBuyEngineSelfTests();v2.tests.forEach(x=>tests.push([`BUY V2 · ${x.name}`,x.ok]));const passed=tests.filter(t=>t[1]).length; $("selfTestBadge").textContent=`${passed} / ${tests.length} 通過`; $("selfTestBadge").className=`badge ${passed===tests.length?"buy":"sell"}`; $("selfTestList").innerHTML=tests.map(([n,ok])=>`<li>${ok?"通過":"失敗"} · ${n}</li>`).join(""); return {passed,total:tests.length,tests}; }
+  const v2=window.BuyEngineV2.runBuyEngineSelfTests();v2.tests.forEach(x=>tests.push([`BUY V2 · ${x.name}`,x.ok]));const passed=tests.filter(t=>t[1]).length,failed=tests.filter(([,ok])=>!ok);if(failed.length)console.warn(`[ARK Strategy Lab] 自我測試失敗：${passed}/${tests.length}`,failed.map(([name])=>name));else console.info(`[ARK Strategy Lab] 自我測試通過：${passed}/${tests.length}`);return {passed,total:tests.length,tests}; }
 
 function saveETFs(){ localStorage.setItem(CONFIG.storageKeys.etfs,JSON.stringify(window.currentETFs)); }
 function bind(){
