@@ -152,10 +152,10 @@ function analyzeArkImages_(request) {
 function buildArkVisionPrompt_() {
   return [
     '你正在辨識台灣券商 App 的「價值佈局」ETF 清單截圖。多張圖片可能有重疊列，最後只保留每個 ETF 一筆。',
-    '允許的 ETF 代號與名稱：0055 元大MSCI金融、00960 野村全球航運龍頭、00875 國泰網路資安、0056 元大高股息、0050 元大台灣50、00830 國泰費城半導體、00631L 元大台灣50正2、0052 富邦科技、00911 兆豐洲際半導體、0053 元大電子、006208 富邦台50、0057 富邦摩台、00988A 主動統一全球創新。',
+    '辨識圖片中所有可見 ETF，不限固定清單。股票代號通常為 4 至 6 位數字，部分主動式或槓桿 ETF 會在尾端帶英文字母，例如 00981A、00631L。',
     '逐列讀取：股票代號與中文名稱；即時淨值下方紅色或綠色的折溢價%；位階股數欄上方黃色數字；位階布局金額欄上方黃色數字；同欄下方灰色的風控股數與風控布局金額。',
     '0 是合法值，不可因為是 0 而省略。不要把即時淨值當作布局金額，也不要把黃色與灰色數字交換。',
-    '若兩張圖出現同一 ETF，合併為一筆並採用最清楚完整的數值。不要生成圖片中不存在的 ETF。僅回傳符合指定 JSON schema 的結果。'
+    '若兩張圖出現同一 ETF，合併為一筆並採用最清楚完整的數值。逐列掃描，不可只辨識既有或熟悉的 ETF，也不要生成圖片中不存在的 ETF。僅回傳符合指定 JSON schema 的結果。'
   ].join('\n');
 }
 
@@ -163,16 +163,18 @@ function normalizeGeminiItems_(rawItems) {
   const names = {
     '0055':'元大MSCI金融','00960':'野村全球航運龍頭','00875':'國泰網路資安','0056':'元大高股息','0050':'元大台灣50',
     '00830':'國泰費城半導體','00631L':'元大台灣50正2','0052':'富邦科技','00911':'兆豐洲際半導體','0053':'元大電子',
-    '006208':'富邦台50','0057':'富邦摩台','00988A':'主動統一全球創新'
+    '006208':'富邦台50','0057':'富邦摩台','00988A':'主動統一全球創新','00913':'兆豐台灣晶圓製造','00935':'野村臺灣新科技50',
+    '00947':'台新臺灣IC設計','00891':'中信關鍵半導體','00981A':'主動統一台股增長','00728':'第一金工業30','00690':'兆豐藍籌30',
+    '00927':'群益半導體收益','00894':'中信小資高價30'
   };
   const map = {};
   (rawItems || []).forEach(raw => {
     let symbol = String(raw.symbol || '').toUpperCase().replace(/[^0-9A-Z]/g, '').replace(/^O/, '0');
     if (symbol === '00631') symbol = '00631L';
-    if (!names[symbol]) return;
+    if (!/^\d{4,6}[A-Z]?$/.test(symbol)) return;
     const item = {
       symbol,
-      name: names[symbol],
+      name: names[symbol] || String(raw.name || '').trim() || symbol,
       premiumPercent: numberOrNull_(raw.premiumPercent),
       positionShares: integerOrNull_(raw.positionShares),
       positionAmount: integerOrNull_(raw.positionAmount),
