@@ -36,7 +36,7 @@
           </div>
           <p class="section-note">
             每天輸入 ARK
-            配置、當下大盤、實際配置與建議佈局金額；這四項每天開啟網頁時預設留白。
+            配置、當下大盤、實際配置與建議佈局／調節金額；這四項每天開啟網頁時預設留白。調節金額請輸入負數。
           </p>
           <div class="form-grid">
             <label class="manual-input"
@@ -69,13 +69,12 @@
                 placeholder="請輸入"
             /></label>
             <label class="manual-input"
-              >ARK 建議佈局金額（元）<input
+              >ARK 建議佈局／調節金額（元）<input
                 id="arkSuggestedCapital"
                 class="manual-field"
                 type="number"
-                min="0"
                 step="1000"
-                placeholder="請輸入"
+                placeholder="請輸入；若為調節請加負號，例如 -10000"
             /></label>
             <label
               >昨日 ARK 配置 %<input
@@ -534,7 +533,7 @@
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="config.js?v=2.3"></script>
     <script src="buy-engine-v2.js?v=2.7"></script>
-    <script src="app.js?v=4.0"></script>
+    <script src="app.js?v=4.1"></script>
     <script src="rebalance.js?v=1.3"></script>
     <script src="rebalance-ocr.js?v=1.5"></script>
   </body>

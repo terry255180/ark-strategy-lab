@@ -1978,7 +1978,7 @@ function decisionReasons(input, d) {
   }
   if (d.action === "BUY" && d.gap > CONFIG.defensiveAccumulationGap)
     r.push(
-      `缺口超過 20%，採防守型分批建倉並以 1 倍位階布局；只有 ARK 進入 ${levels.upperDecile}% 以上且持續上升時才提高倍率。`,
+      `缺口超過 20% 時仍採分批建倉；ARK 位於 6x% 或趨勢下降時踩煞車至 1 倍，其餘區間考慮折溢價篩選，以約 2 倍提高實際成交涵蓋率。`,
     );
   else if (d.action === "BUY" && d.trend.delta1D < 0)
     r.push("ARK 走弱時保留買進方向，但降低建倉速度。");
@@ -2006,7 +2006,9 @@ function buildAllocationSummary(d, input, market = {}) {
     ? "大盤位於新高附近，若 ARK 同步下降應偏向控風險；若 ARK 反而上升，則代表模型仍願意承擔風險。"
     : market.indexChangePercent > 0
       ? "大盤仍在上漲但尚未到同步紀錄高點，交易速度應以 ARK 趨勢確認為主。"
-      : "大盤回落時不因單日下跌直接停買，仍依缺口與 ARK 趨勢分批處理。";
+      : gap > 0
+        ? "大盤回落時不因單日下跌直接停買，仍依缺口與 ARK 趨勢分批處理。"
+        : "大盤正在回落；若 ARK 也持續下調，代表超配部位的調節理由增強。";
   if (absoluteGap <= CONFIG.deadBand)
     return `目前持倉 ${actual.toFixed(2)}% 與 ARK ${target.toFixed(2)}% 接近，位於 ±${CONFIG.deadBand}% 無動作區間。${trendContext} ${marketContext} 結論：維持持倉，不為小差距產生交易成本；等缺口超過 1% 或 ARK 趨勢進一步確認後再處理。`;
   if (gap > 0) {
@@ -2017,10 +2019,7 @@ function buildAllocationSummary(d, input, market = {}) {
           ? "中度低配"
           : "輕度低配";
     let actionText;
-    if (
-      gap > CONFIG.defensiveAccumulationGap &&
-      !(water.zone === "HIGH" && water.direction === "RISING")
-    )
+    if (gap > CONFIG.defensiveAccumulationGap && multiplier <= 1.05)
       actionText =
         "缺口雖大，但為避免一次追滿，本次固定使用 1 倍位階股數分批布局";
     else if (water.zone === "HIGH" && water.direction === "RISING")
@@ -2040,7 +2039,10 @@ function buildAllocationSummary(d, input, market = {}) {
     actionText =
       "差距仍小，先不急著賣；只有 ARK 繼續下降並形成趨勢時才小幅調節";
   else if (fallingConfirmed && d.action === "SELL")
-    actionText = `ARK 降風險趨勢已確認，可處理超額部位的 ${(d.rate * 100).toFixed(0)}%，預計把配置由 ${actual.toFixed(2)}% 降至 ${d.target.toFixed(2)}%`;
+    actionText =
+      input.arkSuggestedCapital < 0
+        ? `可調節降低風險；ARK 降風險趨勢已確認，可處理超額部位金額 NT$ ${Math.round(input.arkSuggestedCapital).toLocaleString("zh-TW")}，可至調節計算機中檢視股票配置`
+        : `可調節降低風險；ARK 降風險趨勢已確認，可處理超額部位的 ${(d.rate * 100).toFixed(0)}%，預計把配置由 ${actual.toFixed(2)}% 降至 ${d.target.toFixed(2)}%；若要顯示調節金額，請在建議佈局／調節金額輸入負數`;
   else
     actionText =
       "目前只有超額事實、尚缺持續下降確認，先觀察；不因大盤單獨創高立即賣出";
@@ -2309,10 +2311,14 @@ function applyArkWaterLevelMultiplierPolicy(plan, input, d) {
       waterLevelMultiplierPolicy: "NONE",
     };
   }
-  let policy = "NORMAL";
-  if (d.gap > CONFIG.defensiveAccumulationGap) {
+  let policy = "PREMIUM_FILTER_TWO_X";
+  scale = Math.max(scale, 2);
+  if (
+    state.value < 70 ||
+    (d.gap > CONFIG.defensiveAccumulationGap && state.direction === "FALLING")
+  ) {
     scale = 1;
-    policy = "LARGE_GAP_ONE_X";
+    policy = "SIXTIES_BRAKE_ONE_X";
   }
   if (state.zone === "LOW" && state.direction === "FALLING") {
     scale = Math.min(scale || 1, 1);
@@ -2325,7 +2331,7 @@ function applyArkWaterLevelMultiplierPolicy(plan, input, d) {
       0,
       1,
     );
-    scale = Math.max(scale, round(1.5 + 1.5 * progress, 2));
+    scale = Math.max(scale, round(2 + progress, 2));
     policy = "HIGH_RISING_ACCELERATE";
   }
   return {
@@ -2468,7 +2474,11 @@ function renderDashboard() {
       ? positionExecution.baseAmount > 0
         ? `NT$ ${positionExecution.totalAmount.toLocaleString("zh-TW")}`
         : "待辨識 ETF 位階資料"
-      : "—";
+      : d.action === "SELL"
+        ? input.arkSuggestedCapital < 0
+          ? `NT$ ${Math.round(input.arkSuggestedCapital).toLocaleString("zh-TW")}`
+          : "請輸入負數調節金額"
+        : "—";
   $("executionSpeed").textContent =
     d.action === "BUY"
       ? `位階股數（依淨值）× ${positionExecution.multiplier.toFixed(2)} 倍`
@@ -2991,6 +3001,30 @@ function runSelfTests() {
       );
     return plan.dynamicScale === 1;
   });
+  test("ARK離開6x水位後以2倍提高折溢價篩選涵蓋率", () => {
+    const input = {
+        todayArk: 72,
+        actualAllocation: 65,
+        arkSuggestedCapital: 10000,
+      },
+      d = {
+        action: "BUY",
+        gap: 7,
+        trend: { delta1D: 0.2 },
+        waterLevelState: {
+          zone: "NORMAL",
+          direction: "RISING",
+          value: 72,
+          levels: CONFIG.arkWaterLevels,
+        },
+      },
+      plan = applyArkWaterLevelMultiplierPolicy(
+        { dynamicScale: 1, arkBaseTotal: 1000 },
+        input,
+        d,
+      );
+    return plan.dynamicScale === 2;
+  });
   test("ARK前10%高水位續升會加強布局", () => {
     const input = {
         todayArk: 87.4,
@@ -3106,6 +3140,28 @@ function runSelfTests() {
         },
       };
     return buildAllocationSummary(d, input).includes("超額部位的 50%");
+  });
+  test("負數調節金額會直接顯示於超配總結", () => {
+    const input = {
+        todayArk: 66.8,
+        actualAllocation: 80,
+        arkSuggestedCapital: -10000,
+      },
+      d = {
+        action: "SELL",
+        gap: -13.2,
+        rate: 0.5,
+        target: 73.4,
+        trend: { delta1D: -1, delta3D: -3, delta5D: -5 },
+        waterLevelState: {
+          zone: "NORMAL",
+          direction: "FALLING",
+          value: 66.8,
+          levels: CONFIG.arkWaterLevels,
+        },
+      },
+      summary = buildAllocationSummary(d, input);
+    return summary.includes("NT$ -10,000") && summary.includes("調節計算機");
   });
   const v2 = window.BuyEngineV2.runBuyEngineSelfTests();
   v2.tests.forEach((x) => tests.push([`BUY V2 · ${x.name}`, x.ok]));
