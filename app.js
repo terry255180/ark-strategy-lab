@@ -2121,6 +2121,197 @@ function buildTrendSummary(d, input = { todayArk: 0, actualAllocation: 0 }) {
     });
   return `${arkText} ${marketText} ${divergenceText} ${waterText} ${allocationText}`;
 }
+function calculateBacktestMetrics(values, dailyReturns, allocations, turnover) {
+  const cumulativeReturn = (values.at(-1) / values[0] - 1) * 100;
+  let peak = values[0],
+    maxDrawdown = 0;
+  for (const value of values) {
+    peak = Math.max(peak, value);
+    maxDrawdown = Math.min(maxDrawdown, ((value - peak) / peak) * 100);
+  }
+  const mean = dailyReturns.length
+      ? dailyReturns.reduce((sum, value) => sum + value, 0) /
+        dailyReturns.length
+      : 0,
+    variance =
+      dailyReturns.length > 1
+        ? dailyReturns.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
+          (dailyReturns.length - 1)
+        : 0;
+  return {
+    cumulativeReturn,
+    maxDrawdown,
+    annualVolatility: Math.sqrt(variance) * Math.sqrt(252) * 100,
+    turnover,
+    averageAllocation:
+      allocations.reduce((sum, value) => sum + value, 0) / allocations.length,
+  };
+}
+function buildStrategyBacktest(records) {
+  const rows = records
+    .filter(
+      (row) =>
+        row.date &&
+        Number(row.taiwanIndex) > 0 &&
+        Number.isFinite(Number(row.arkAllocation)),
+    )
+    .map((row) => ({
+      ...row,
+      taiwanIndex: Number(row.taiwanIndex),
+      arkAllocation: Number(row.arkAllocation),
+    }))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  if (rows.length < 2) return { rows, strategies: [] };
+  const definitions = [
+      {
+        key: "current",
+        name: "目前規則",
+        initial: rows[0].arkAllocation,
+      },
+      {
+        key: "ark",
+        name: "ARK直接配置",
+        initial: rows[0].arkAllocation,
+      },
+      { key: "fixed", name: "固定70%", initial: 70 },
+    ],
+    states = Object.fromEntries(
+      definitions.map((definition) => [
+        definition.key,
+        {
+          ...definition,
+          allocation: clamp(definition.initial, 0, 100),
+          value: 100,
+          values: [100],
+          allocations: [clamp(definition.initial, 0, 100)],
+          dailyReturns: [],
+          turnover: 0,
+          previousRegime: "HOLD",
+        },
+      ]),
+    ),
+    dates = [rows[0].date];
+  for (let i = 1; i < rows.length; i++) {
+    const marketReturn = rows[i].taiwanIndex / rows[i - 1].taiwanIndex - 1;
+    dates.push(rows[i].date);
+    for (const state of Object.values(states)) {
+      const portfolioReturn = marketReturn * (state.allocation / 100);
+      state.value *= 1 + portfolioReturn;
+      state.values.push(state.value);
+      state.dailyReturns.push(portfolioReturn);
+    }
+    const current = states.current,
+      row = rows[i],
+      history = rows
+        .slice(Math.max(0, i - 10), i)
+        .map((item) => item.arkAllocation),
+      marketPrediction = predictMarketPosition(rows.slice(0, i + 1), {
+        todayArk: row.arkAllocation,
+        cnn: Number(row.cnn) || 50,
+        rsi: Number(row.rsi) || 50,
+      }),
+      input = {
+        todayArk: row.arkAllocation,
+        actualAllocation: current.allocation,
+        arkHistory: history,
+        cnn: Number(row.cnn) || 50,
+        rsi: Number(row.rsi) || 50,
+        margin: Number(row.marginMaintenance) || 0,
+        marketPosition: marketPrediction.value,
+        currentTaiwanIndex: row.taiwanIndex,
+        previousRegime: current.previousRegime,
+      },
+      decision = applyArkWaterLevelDecisionPolicy(
+        input,
+        calculateDecision(input),
+      ),
+      nextCurrent =
+        decision.action === "HOLD"
+          ? current.allocation
+          : clamp(decision.target, 0, 100);
+    current.turnover += Math.abs(nextCurrent - current.allocation);
+    current.allocation = nextCurrent;
+    current.previousRegime = decision.regime;
+    states.ark.turnover += Math.abs(row.arkAllocation - states.ark.allocation);
+    states.ark.allocation = clamp(row.arkAllocation, 0, 100);
+    states.fixed.allocation = 70;
+    for (const state of Object.values(states))
+      state.allocations.push(state.allocation);
+  }
+  const strategies = definitions.map(({ key, name }) => {
+    const state = states[key];
+    return {
+      key,
+      name,
+      values: state.values,
+      metrics: calculateBacktestMetrics(
+        state.values,
+        state.dailyReturns,
+        state.allocations,
+        state.turnover,
+      ),
+    };
+  });
+  return { rows, dates, strategies };
+}
+function renderStrategyValidation() {
+  const year = CONFIG.arkWaterLevels.year,
+    records = getAnnualArkRecords(window.centralRecords || [], year),
+    result = buildStrategyBacktest(records);
+  if (!result.strategies.length) {
+    $("backtestCount").textContent = "資料不足";
+    $("backtestMetrics").innerHTML =
+      '<p class="note">至少需要兩筆有效的大盤與ARK資料。</p>';
+    $("backtestConclusion").textContent = "尚無法形成驗證結論。";
+    $("backtestChart").innerHTML = "";
+    $("backtestTable").innerHTML = "";
+    return;
+  }
+  $("backtestCount").textContent =
+    `${result.rows.length} 筆 · ${result.rows[0].date}～${result.rows.at(-1).date}`;
+  const signed = (value) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+  $("backtestMetrics").innerHTML = result.strategies
+    .map(
+      (strategy) =>
+        `<div class="backtest-metric ${strategy.key}"><span>${strategy.name}</span><strong>${signed(strategy.metrics.cumulativeReturn)}</strong><small>最大回撤 ${signed(strategy.metrics.maxDrawdown)} · 平均持股 ${strategy.metrics.averageAllocation.toFixed(1)}%</small></div>`,
+    )
+    .join("");
+  const current = result.strategies.find(
+      (strategy) => strategy.key === "current",
+    ),
+    ark = result.strategies.find((strategy) => strategy.key === "ark"),
+    returnDifference =
+      current.metrics.cumulativeReturn - ark.metrics.cumulativeReturn,
+    drawdownDifference = current.metrics.maxDrawdown - ark.metrics.maxDrawdown;
+  $("backtestConclusion").textContent =
+    returnDifference >= 0 && drawdownDifference >= 0
+      ? `目前樣本下，現行規則相較 ARK 直接配置多 ${returnDifference.toFixed(2)}% 報酬，最大回撤改善 ${drawdownDifference.toFixed(2)}%；報酬與風險同時改善，但仍需更多跨行情資料驗證。`
+      : returnDifference < 0 && drawdownDifference >= 0
+        ? `目前樣本下，現行規則少 ${Math.abs(returnDifference).toFixed(2)}% 報酬，換得最大回撤改善 ${drawdownDifference.toFixed(2)}%；這是降低風險所付出的機會成本。`
+        : returnDifference >= 0
+          ? `目前樣本下，現行規則多 ${returnDifference.toFixed(2)}% 報酬，但最大回撤惡化 ${Math.abs(drawdownDifference).toFixed(2)}%；較高報酬來自承擔更多風險。`
+          : `目前樣本下，現行規則比 ARK 直接配置少 ${Math.abs(returnDifference).toFixed(2)}% 報酬，最大回撤也惡化 ${Math.abs(drawdownDifference).toFixed(2)}%；暫時不能視為已驗證優於直接配置，應保留參數調整空間。`;
+  const allValues = result.strategies.flatMap((strategy) => strategy.values),
+    min = Math.min(...allValues),
+    max = Math.max(...allValues),
+    width = 1000,
+    height = 230,
+    left = 42,
+    right = 12,
+    top = 14,
+    bottom = 26,
+    x = (index) =>
+      left +
+      (index / Math.max(1, result.dates.length - 1)) * (width - left - right),
+    y = (value) =>
+      top +
+      ((max - value) / Math.max(0.0001, max - min)) * (height - top - bottom),
+    gridValues = [max, (max + min) / 2, min];
+  $("backtestChart").innerHTML =
+    `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="三種配置策略淨值曲線">${gridValues.map((value) => `<line class="grid" x1="${left}" x2="${width - right}" y1="${y(value)}" y2="${y(value)}"/><text x="2" y="${y(value) + 3}">${value.toFixed(1)}</text>`).join("")}${result.strategies.map((strategy) => `<polyline class="line ${strategy.key}" points="${strategy.values.map((value, index) => `${x(index)},${y(value)}`).join(" ")}"/>`).join("")}<text x="${left}" y="${height - 5}">${result.dates[0].slice(5).replace("-", "/")}</text><text x="${width - right}" y="${height - 5}" text-anchor="end">${result.dates.at(-1).slice(5).replace("-", "/")}</text></svg>`;
+  $("backtestTable").innerHTML =
+    `<div class="backtest-row header"><span>策略</span><span>累積報酬</span><span>最大回撤</span><span>年化波動</span><span>累計換手</span><span>平均持股</span></div>${result.strategies.map((strategy) => `<div class="backtest-row"><strong>${strategy.name}</strong><span>${signed(strategy.metrics.cumulativeReturn)}</span><span>${signed(strategy.metrics.maxDrawdown)}</span><span>${strategy.metrics.annualVolatility.toFixed(2)}%</span><span>${strategy.metrics.turnover.toFixed(1)}%點</span><span>${strategy.metrics.averageAllocation.toFixed(1)}%</span></div>`).join("")}`;
+}
 function quantile(values, p) {
   const sorted = values
     .map(Number)
@@ -2559,6 +2750,7 @@ function renderDashboard() {
   );
   renderBuyEngine(plan, input, d);
   renderSparkline(input);
+  renderStrategyValidation();
   renderArkLevelRecords();
   renderETFExecution();
   persistState();
@@ -3301,6 +3493,44 @@ function runSelfTests() {
       summary = buildAllocationSummary(d, input);
     return summary.includes("NT$ -10,000") && summary.includes("調節計算機");
   });
+  test("策略回測使用前一日配置避免偷看當日結果", () => {
+    const result = buildStrategyBacktest([
+        {
+          date: "2026-01-01",
+          taiwanIndex: 100,
+          arkAllocation: 50,
+          actualAllocation: 50,
+        },
+        { date: "2026-01-02", taiwanIndex: 110, arkAllocation: 100 },
+        { date: "2026-01-03", taiwanIndex: 121, arkAllocation: 0 },
+      ]),
+      ark = result.strategies.find((strategy) => strategy.key === "ark"),
+      fixed = result.strategies.find((strategy) => strategy.key === "fixed");
+    return (
+      Math.abs(ark.metrics.cumulativeReturn - 15.5) < 0.0001 &&
+      Math.abs(fixed.metrics.cumulativeReturn - 14.49) < 0.0001
+    );
+  });
+  test("策略驗證三種淨值皆為有限數值", () => {
+    const result = buildStrategyBacktest([
+      {
+        date: "2026-01-01",
+        taiwanIndex: 100,
+        arkAllocation: 70,
+        actualAllocation: 68,
+      },
+      { date: "2026-01-02", taiwanIndex: 102, arkAllocation: 72 },
+      { date: "2026-01-03", taiwanIndex: 99, arkAllocation: 68 },
+      { date: "2026-01-04", taiwanIndex: 103, arkAllocation: 75 },
+      { date: "2026-01-05", taiwanIndex: 105, arkAllocation: 74 },
+    ]);
+    return (
+      result.strategies.length === 3 &&
+      result.strategies.every((strategy) =>
+        strategy.values.every(Number.isFinite),
+      )
+    );
+  });
   const v2 = window.BuyEngineV2.runBuyEngineSelfTests();
   v2.tests.forEach((x) => tests.push([`BUY V2 · ${x.name}`, x.ok]));
   const passed = tests.filter((t) => t[1]).length,
@@ -3437,6 +3667,9 @@ window.ARKStrategyLab = {
   calculateForwardIndexMetrics,
   buildArkLevelEvents,
   summarizeArkEvents,
+  calculateBacktestMetrics,
+  buildStrategyBacktest,
+  renderStrategyValidation,
   summarizePositionExecution,
   buildAllocationSummary,
   buildTrendSummary,

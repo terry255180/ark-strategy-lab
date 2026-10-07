@@ -161,8 +161,8 @@ function init(){
   $("rebalanceOcrImages").addEventListener("change",()=>{urls.forEach(URL.revokeObjectURL);files=[...$("rebalanceOcrImages").files].filter(f=>f.type.startsWith("image/")).slice(0,4);urls=files.map(URL.createObjectURL);$("rebalanceOcrPreview").innerHTML=urls.map((u,i)=>`<figure><img src="${u}" alt="持股截圖 ${i+1}"><figcaption>截圖 ${i+1}</figcaption></figure>`).join("");$("rebalanceRunOcr").disabled=!files.length;$("rebalanceClearOcr").hidden=!files.length;setStatus(files.length?`已選擇 ${files.length} 張，按「開始辨識」。`:"尚未選擇圖片");});
   $("rebalanceRunOcr").addEventListener("click",recognize);$("rebalanceClearOcr").addEventListener("click",clear);
   window.RebalanceHoldingOCR={parseHoldingWords,parseHoldingText,mergeRows,checkRow,runOcrSelfTests};
-  const r=runOcrSelfTests(),badge=$("selfTestBadge"),counts=badge.textContent.match(/(\d+)\s*\/\s*(\d+)/),old=Number(counts?.[1]||0),total=Number(counts?.[2]||0);
-  $("selfTestList").insertAdjacentHTML("beforeend",r.cases.map(([name,ok])=>`<li>${ok?"通過":"失敗"} · 庫存截圖：${esc(name)}</li>`).join(""));badge.textContent=`${old+r.passed} / ${total+r.total} 通過`;badge.className=`badge ${old+r.passed===total+r.total?"buy":"sell"}`;
+  const r=runOcrSelfTests(),badge=$("selfTestBadge"),list=$("selfTestList");
+  if(badge&&list){const counts=badge.textContent.match(/(\d+)\s*\/\s*(\d+)/),old=Number(counts?.[1]||0),total=Number(counts?.[2]||0);list.insertAdjacentHTML("beforeend",r.cases.map(([name,ok])=>`<li>${ok?"通過":"失敗"} · 庫存截圖：${esc(name)}</li>`).join(""));badge.textContent=`${old+r.passed} / ${total+r.total} 通過`;badge.className=`badge ${old+r.passed===total+r.total?"buy":"sell"}`;}
 }
 document.addEventListener("DOMContentLoaded",init);
 })();

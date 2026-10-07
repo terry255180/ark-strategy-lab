@@ -503,6 +503,30 @@
         </div>
       </details>
 
+      <section class="card validation-card">
+        <div class="section-head">
+          <div>
+            <h2>策略驗證儀表板</h2>
+            <p>比較目前規則、ARK 直接配置與固定 70% 配置的歷史結果</p>
+          </div>
+          <span id="backtestCount" class="badge neutral">計算中</span>
+        </div>
+        <div id="backtestMetrics" class="backtest-metrics"></div>
+        <div id="backtestConclusion" class="backtest-conclusion"></div>
+        <div class="backtest-chart-wrap">
+          <div class="backtest-legend">
+            <span><i class="current"></i>目前規則</span>
+            <span><i class="ark"></i>ARK直接配置</span>
+            <span><i class="fixed"></i>固定70%</span>
+          </div>
+          <div id="backtestChart" class="backtest-chart"></div>
+        </div>
+        <div id="backtestTable" class="backtest-table"></div>
+        <p class="research-warning">
+          採前一交易日收盤後配置承接下一交易日大盤報酬；目前規則與ARK直接配置均從首日ARK水位起跑。未計股息、稅費、滑價與ETF追蹤差異；目前規則為配置層模擬，不等同實際成交績效。
+        </p>
+      </section>
+
       <section class="bottom-grid">
         <article class="card research-card">
           <div class="section-head">
@@ -533,8 +557,8 @@
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="config.js?v=2.4"></script>
     <script src="buy-engine-v2.js?v=2.7"></script>
-    <script src="app.js?v=4.3"></script>
+    <script src="app.js?v=4.4"></script>
     <script src="rebalance.js?v=1.3"></script>
-    <script src="rebalance-ocr.js?v=1.5"></script>
+    <script src="rebalance-ocr.js?v=1.6"></script>
   </body>
 </html>
