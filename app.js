@@ -2165,6 +2165,38 @@ function getAnnualArkLevelRecords(
     .filter((row) => row.arkAllocation >= high || row.arkAllocation <= low)
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
+function calculateForwardIndexMetrics(records, entryDate, horizon = 40) {
+  const start = records.findIndex((row) => row.date === entryDate),
+    entryIndex = Number(records[start]?.taiwanIndex);
+  if (start < 0 || !(entryIndex > 0))
+    return {
+      forwardReturns: { 5: null, 10: null, 20: null, 40: null },
+      maxDrawdown: null,
+      observedDays: 0,
+      complete: false,
+    };
+  const forwardReturns = {};
+  for (const days of [5, 10, 20, 40]) {
+    const futureIndex = Number(records[start + days]?.taiwanIndex);
+    forwardReturns[days] =
+      futureIndex > 0 ? ((futureIndex - entryIndex) / entryIndex) * 100 : null;
+  }
+  const end = Math.min(records.length - 1, start + horizon);
+  let peak = entryIndex,
+    maxDrawdown = 0;
+  for (let i = start; i <= end; i++) {
+    const value = Number(records[i]?.taiwanIndex);
+    if (!(value > 0)) continue;
+    peak = Math.max(peak, value);
+    maxDrawdown = Math.min(maxDrawdown, ((value - peak) / peak) * 100);
+  }
+  return {
+    forwardReturns,
+    maxDrawdown,
+    observedDays: end - start,
+    complete: start + horizon < records.length,
+  };
+}
 function buildArkLevelEvents(
   records,
   high = CONFIG.arkWaterLevels.upperDecile,
@@ -2198,6 +2230,10 @@ function buildArkLevelEvents(
       Number.isFinite(exitIndex)
         ? ((exitIndex - startIndex) / startIndex) * 100
         : null;
+    active.forwardMetrics = calculateForwardIndexMetrics(
+      records,
+      active.entry.date,
+    );
     events.push(active);
     active = null;
   };
@@ -2220,29 +2256,47 @@ function buildArkLevelEvents(
   return events;
 }
 function summarizeArkEvents(events, kind) {
+  const matching = events.filter((event) => event.kind === kind),
+    horizons = [5, 10, 20, 40],
+    forwardAverages = {},
+    forwardCounts = {};
+  for (const days of horizons) {
+    const values = matching
+      .map((event) => event.forwardMetrics?.forwardReturns?.[days])
+      .filter(Number.isFinite);
+    forwardCounts[days] = values.length;
+    forwardAverages[days] = values.length
+      ? values.reduce((sum, value) => sum + value, 0) / values.length
+      : null;
+  }
+  const drawdowns = matching
+    .map((event) => event.forwardMetrics?.maxDrawdown)
+    .filter(Number.isFinite);
   const completed = events.filter(
     (event) =>
       event.kind === kind && event.exit && Number.isFinite(event.indexChange),
   );
-  if (!completed.length)
-    return {
-      count: 0,
-      averageDuration: null,
-      averageChange: null,
-      positiveRate: null,
-    };
   return {
     count: completed.length,
-    averageDuration:
-      completed.reduce((sum, event) => sum + event.duration, 0) /
-      completed.length,
-    averageChange:
-      completed.reduce((sum, event) => sum + event.indexChange, 0) /
-      completed.length,
-    positiveRate:
-      (completed.filter((event) => event.indexChange > 0).length /
-        completed.length) *
-      100,
+    averageDuration: completed.length
+      ? completed.reduce((sum, event) => sum + event.duration, 0) /
+        completed.length
+      : null,
+    averageChange: completed.length
+      ? completed.reduce((sum, event) => sum + event.indexChange, 0) /
+        completed.length
+      : null,
+    positiveRate: completed.length
+      ? (completed.filter((event) => event.indexChange > 0).length /
+          completed.length) *
+        100
+      : null,
+    forwardAverages,
+    forwardCounts,
+    averageMaxDrawdown: drawdowns.length
+      ? drawdowns.reduce((sum, value) => sum + value, 0) / drawdowns.length
+      : null,
+    maxDrawdownCount: drawdowns.length,
   };
 }
 const formatIndex = (value) =>
@@ -2283,8 +2337,12 @@ function renderArkLevelRecords() {
     ["前10%分界", quantile(values, 0.9)],
     ["後10%分界", quantile(values, 0.1)],
   ];
-  const summaryCard = (label, summary, kind) =>
-    `<div class="event-summary ${kind.toLowerCase()}"><span>${label} · 已完成 ${summary.count} 次</span><strong>${summary.count ? `平均 ${summary.averageDuration.toFixed(1)} 個交易日 · 大盤 ${summary.averageChange >= 0 ? "+" : ""}${summary.averageChange.toFixed(2)}%` : "尚無完整事件"}</strong><small>${summary.count ? `進入至離開期間大盤上漲比例 ${summary.positiveRate.toFixed(0)}%` : `需要出現進入與離開紀錄後才能統計`}</small></div>`;
+  const formatReturn = (value) =>
+      Number.isFinite(value)
+        ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`
+        : "資料不足",
+    summaryCard = (label, summary, kind) =>
+      `<div class="event-summary ${kind.toLowerCase()}"><span>${label} · 已完成 ${summary.count} 次</span><strong>${summary.count ? `平均 ${summary.averageDuration.toFixed(1)} 個交易日 · 大盤 ${summary.averageChange >= 0 ? "+" : ""}${summary.averageChange.toFixed(2)}%` : "尚無完整事件"}</strong><small>${summary.count ? `進入至離開期間大盤上漲比例 ${summary.positiveRate.toFixed(0)}%` : `需要出現進入與離開紀錄後才能統計`}</small><small>進入後平均報酬：5日 ${formatReturn(summary.forwardAverages[5])}（${summary.forwardCounts[5]}次） · 10日 ${formatReturn(summary.forwardAverages[10])}（${summary.forwardCounts[10]}次） · 20日 ${formatReturn(summary.forwardAverages[20])}（${summary.forwardCounts[20]}次） · 40日 ${formatReturn(summary.forwardAverages[40])}（${summary.forwardCounts[40]}次）</small><small>進入後最長40日平均最大回撤：${formatReturn(summary.averageMaxDrawdown)}（${summary.maxDrawdownCount}次）</small></div>`;
   $("arkLevelRecords").innerHTML =
     `<section class="ark-research-block"><h3>${year} 年水位分布</h3><div class="distribution-grid">${distribution.map(([label, value]) => `<div><span>${label}</span><strong>${pct(value, 1)}</strong></div>`).join("")}</div></section><section class="ark-research-block"><h3>極端水位日期明細</h3><div class="ark-level-row ark-level-head"><span>日期</span><span>台灣加權指數</span><span>方舟建議持股</span></div>${levels.map((row) => `<div class="ark-level-row"><span>${formatDate(row.date)}</span><strong>${formatIndex(row.taiwanIndex)}</strong><strong class="${row.arkAllocation >= water.upperDecile ? "level-high" : "level-low"}">${pct(row.arkAllocation, 1)}</strong></div>`).join("") || `<p class="note">目前沒有 ${water.upperDecile}% 以上或 ${water.lowerDecile}% 以下紀錄。</p>`}</section><section class="ark-research-block"><h3>極端水位事件與歷史規律</h3><div class="event-summary-grid">${summaryCard(`高水位 ≥${water.upperDecile}%`, highSummary, "HIGH")}${summaryCard(`低水位 ≤${water.lowerDecile}%`, lowSummary, "LOW")}</div><div class="event-list">${
       events
@@ -2292,10 +2350,10 @@ function renderArkLevelRecords() {
         .reverse()
         .map(
           (event) =>
-            `<article class="event-card ${event.kind.toLowerCase()}"><div class="event-card-head"><strong>${event.kind === "HIGH" ? "高水位事件" : "低水位事件"}</strong><span>${event.duration} 個交易日</span></div><dl><div><dt>進入日</dt><dd>${formatDate(event.entry.date)} · 大盤 ${formatIndex(event.entry.taiwanIndex)} · ARK ${pct(event.entry.arkAllocation, 1)}</dd></div><div><dt>區間${event.kind === "HIGH" ? "最高" : "最低"}</dt><dd>${formatDate(event.extreme.date)} · 大盤 ${formatIndex(event.extreme.taiwanIndex)} · ARK ${pct(event.extreme.arkAllocation, 1)}</dd></div><div><dt>離開日</dt><dd>${event.exit ? `${formatDate(event.exit.date)} · 大盤 ${formatIndex(event.exit.taiwanIndex)} · ARK ${pct(event.exit.arkAllocation, 1)}` : "尚未離開極端區間"}</dd></div><div><dt>區間大盤變化</dt><dd>${Number.isFinite(event.indexChange) ? `${event.indexChange >= 0 ? "+" : ""}${event.indexChange.toFixed(2)}%` : "事件進行中"}</dd></div></dl></article>`,
+            `<article class="event-card ${event.kind.toLowerCase()}"><div class="event-card-head"><strong>${event.kind === "HIGH" ? "高水位事件" : "低水位事件"}</strong><span>${event.duration} 個交易日</span></div><dl><div><dt>進入日</dt><dd>${formatDate(event.entry.date)} · 大盤 ${formatIndex(event.entry.taiwanIndex)} · ARK ${pct(event.entry.arkAllocation, 1)}</dd></div><div><dt>區間${event.kind === "HIGH" ? "最高" : "最低"}</dt><dd>${formatDate(event.extreme.date)} · 大盤 ${formatIndex(event.extreme.taiwanIndex)} · ARK ${pct(event.extreme.arkAllocation, 1)}</dd></div><div><dt>離開日</dt><dd>${event.exit ? `${formatDate(event.exit.date)} · 大盤 ${formatIndex(event.exit.taiwanIndex)} · ARK ${pct(event.exit.arkAllocation, 1)}` : "尚未離開極端區間"}</dd></div><div><dt>區間大盤變化</dt><dd>${Number.isFinite(event.indexChange) ? `${event.indexChange >= 0 ? "+" : ""}${event.indexChange.toFixed(2)}%` : "事件進行中"}</dd></div><div><dt>進入後報酬</dt><dd>5日 ${formatReturn(event.forwardMetrics?.forwardReturns?.[5])} · 10日 ${formatReturn(event.forwardMetrics?.forwardReturns?.[10])} · 20日 ${formatReturn(event.forwardMetrics?.forwardReturns?.[20])} · 40日 ${formatReturn(event.forwardMetrics?.forwardReturns?.[40])}</dd></div><div><dt>${event.forwardMetrics?.complete ? "進入後40日最大回撤" : `截至最新（${event.forwardMetrics?.observedDays || 0}日）最大回撤`}</dt><dd>${formatReturn(event.forwardMetrics?.maxDrawdown)}</dd></div></dl></article>`,
         )
         .join("") || `<p class="note">目前尚未形成極端水位事件。</p>`
-    }</div><p class="research-warning">${water.year} 年策略分界：前 10% 為 ${water.upperDecile}%、後 10% 為 ${water.lowerDecile}%。高水位續升偏加強布局且不賣出；低水位續跌偏防守。歷史規律仍不能單獨視為買賣訊號。</p></section>`;
+    }</div><p class="research-warning">報酬以事件進入日的大盤指數為基準，5／10／20／40日均指後續交易日；最大回撤計算進入日起最長40個交易日內，任一期間高點至其後低點的最大跌幅。資料未滿40日會標示「截至最新」。${water.year} 年策略分界：前 10% 為 ${water.upperDecile}%、後 10% 為 ${water.lowerDecile}%。歷史規律仍不能單獨視為買賣訊號。</p></section>`;
 }
 function applyArkWaterLevelMultiplierPolicy(plan, input, d) {
   let scale = Math.max(0, Number(plan.dynamicScale || 0));
@@ -2898,6 +2956,32 @@ function runSelfTests() {
       events[0].exit.date === "2026-01-03"
     );
   });
+  test("極端水位事件會計算進入後5至40日報酬", () => {
+    const rows = Array.from({ length: 41 }, (_, i) => ({
+        date: `2026-01-${String(i + 1).padStart(2, "0")}`,
+        arkAllocation: i === 0 ? 64 : 70,
+        taiwanIndex: 100 + i,
+      })),
+      event = buildArkLevelEvents(rows)[0];
+    return (
+      event.forwardMetrics.forwardReturns[5] === 5 &&
+      event.forwardMetrics.forwardReturns[10] === 10 &&
+      event.forwardMetrics.forwardReturns[20] === 20 &&
+      event.forwardMetrics.forwardReturns[40] === 40 &&
+      event.forwardMetrics.complete
+    );
+  });
+  test("最大回撤使用進入後期間高點至後續低點", () => {
+    const metrics = calculateForwardIndexMetrics(
+      [
+        { date: "2026-01-01", taiwanIndex: 100 },
+        { date: "2026-01-02", taiwanIndex: 110 },
+        { date: "2026-01-03", taiwanIndex: 99 },
+      ],
+      "2026-01-01",
+    );
+    return Math.abs(metrics.maxDrawdown + 10) < 0.0001;
+  });
   test("辨識幾列就保留幾列，不自動補ETF", () =>
     mergeOcrRows([]).length === 0 &&
     mergeOcrRows([
@@ -3350,6 +3434,7 @@ window.ARKStrategyLab = {
   quantile,
   getAnnualArkRecords,
   getAnnualArkLevelRecords,
+  calculateForwardIndexMetrics,
   buildArkLevelEvents,
   summarizeArkEvents,
   summarizePositionExecution,
