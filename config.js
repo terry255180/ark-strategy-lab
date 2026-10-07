@@ -170,7 +170,7 @@ window.CONFIG = Object.freeze({
   sellFillDistribution: 0.15,
   sellFillConfirmed: 0.25,
   sellFillRiskOff: 0.5,
-  maxBuyMultiplier: 3.0,
+  maxBuyMultiplier: 5.0,
   minInitialBuildMultiplier: 1.8,
   arkWaterLevels: Object.freeze({
     year: 2026,

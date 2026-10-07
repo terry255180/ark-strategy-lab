@@ -1957,7 +1957,7 @@ function decisionReasons(input, d) {
     );
   if (water.zone === "HIGH" && water.direction === "RISING")
     r.push(
-      `ARK 已進入今年前 10% 高水位（≥${levels.upperDecile}%）且持續上升，代表模型提高風險承擔；布局倍率會隨水位加強，這個區間不賣股票。`,
+      `ARK 已進入今年前 10% 高水位（≥${levels.upperDecile}%）且持續上升，代表模型提高風險承擔；一般缺口最高 3 倍，1%～5% 小缺口可隨水位逐步提高至 5 倍以補足差距，這個區間不賣股票。`,
     );
   else if (water.zone === "LOW" && water.direction === "FALLING")
     r.push(
@@ -2110,7 +2110,7 @@ function buildTrendSummary(d, input = { todayArk: 0, actualAllocation: 0 }) {
     levels = water.levels,
     waterText =
       water.zone === "HIGH" && water.direction === "RISING"
-        ? `ARK 位於前 10% 高水位（${levels.upperDecile}%～${levels.max}%）並續升，視為模型加大風險承擔：提高布局力道，且此區間不賣股票。`
+        ? `ARK 位於前 10% 高水位（${levels.upperDecile}%～${levels.max}%）並續升，視為模型在相對低檔加大風險承擔：一般缺口最高 3 倍，1%～5% 小缺口可逐步提高至 5 倍，且此區間不賣股票。`
         : water.zone === "LOW" && water.direction === "FALLING"
           ? `ARK 位於後 10% 低水位（${levels.min}%～${levels.lowerDecile}%）並續降，視為模型降低風險：布局最多 1 倍，持倉超額時才分批調節。`
           : `ARK 尚未同時符合極端水位與延續方向，維持一般分批規則。`,
@@ -2331,8 +2331,12 @@ function applyArkWaterLevelMultiplierPolicy(plan, input, d) {
       0,
       1,
     );
-    scale = Math.max(scale, round(2 + progress, 2));
-    policy = "HIGH_RISING_ACCELERATE";
+    const smallGap = d.gap > CONFIG.deadBand && d.gap <= CONFIG.buyWatchMaxGap,
+      highScale = smallGap ? 2 + 3 * progress : 2 + progress;
+    scale = Math.max(scale, round(highScale, 2));
+    policy = smallGap
+      ? "HIGH_RISING_SMALL_GAP_TO_FIVE_X"
+      : "HIGH_RISING_ACCELERATE";
   }
   return {
     ...plan,
@@ -3048,6 +3052,56 @@ function runSelfTests() {
         input,
         d,
       ).dynamicScale === 3
+    );
+  });
+  test("ARK前10%高水位續升且缺口小可逐步提高至5倍", () => {
+    const input = {
+        todayArk: 87.4,
+        actualAllocation: 84.4,
+        arkSuggestedCapital: 10000,
+      },
+      d = {
+        action: "BUY",
+        gap: 3,
+        trend: { delta1D: 1 },
+        waterLevelState: {
+          zone: "HIGH",
+          direction: "RISING",
+          value: 87.4,
+          levels: CONFIG.arkWaterLevels,
+        },
+      };
+    return (
+      applyArkWaterLevelMultiplierPolicy(
+        { dynamicScale: 1, arkBaseTotal: 1000 },
+        input,
+        d,
+      ).dynamicScale === 5
+    );
+  });
+  test("±1%無動作區間不因高水位放大倍率", () => {
+    const input = {
+        todayArk: 87.4,
+        actualAllocation: 87,
+        arkSuggestedCapital: 10000,
+      },
+      d = {
+        action: "HOLD",
+        gap: 0.4,
+        trend: { delta1D: 1 },
+        waterLevelState: {
+          zone: "HIGH",
+          direction: "RISING",
+          value: 87.4,
+          levels: CONFIG.arkWaterLevels,
+        },
+      };
+    return (
+      applyArkWaterLevelMultiplierPolicy(
+        { dynamicScale: 1, arkBaseTotal: 1000 },
+        input,
+        d,
+      ).dynamicScale === 0
     );
   });
   test("ARK後10%低水位續跌時布局不超過1倍", () => {
