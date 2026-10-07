@@ -1984,6 +1984,68 @@ function decisionReasons(input, d) {
     r.push("ARK 走弱時保留買進方向，但降低建倉速度。");
   return r;
 }
+function buildAllocationSummary(d, input, market = {}) {
+  const gap = Number(d.gap),
+    absoluteGap = Math.abs(gap),
+    actual = Number(input.actualAllocation),
+    target = Number(input.todayArk),
+    water = d.waterLevelState || arkWaterLevelState(input, d),
+    multiplier = Math.max(0, Number(d._v2Plan?.dynamicScale || 0)),
+    oneDay = Number(d.trend.delta1D || 0),
+    threeDay = Number(d.trend.delta3D || 0),
+    fiveDay = Number(d.trend.delta5D || 0),
+    fallingConfirmed = oneDay < 0 && (threeDay < 0 || fiveDay < 0),
+    risingConfirmed = oneDay > 0 && (threeDay > 0 || fiveDay > 0),
+    marketHigh = market.isRecordHigh || market.nearRecordHigh;
+  const trendContext = fallingConfirmed
+    ? `ARK 的 1／3／5 日變化至少兩個週期偏下（1日 ${pp(oneDay)}、3日 ${pp(threeDay)}、5日 ${pp(fiveDay)}），降風險訊號具有延續性。`
+    : risingConfirmed
+      ? `ARK 的 1／3／5 日變化至少兩個週期偏上（1日 ${pp(oneDay)}、3日 ${pp(threeDay)}、5日 ${pp(fiveDay)}），加風險訊號具有延續性。`
+      : `ARK 的短中期方向尚未一致（1日 ${pp(oneDay)}、3日 ${pp(threeDay)}、5日 ${pp(fiveDay)}），先視為未確認趨勢。`;
+  const marketContext = marketHigh
+    ? "大盤位於新高附近，若 ARK 同步下降應偏向控風險；若 ARK 反而上升，則代表模型仍願意承擔風險。"
+    : market.indexChangePercent > 0
+      ? "大盤仍在上漲但尚未到同步紀錄高點，交易速度應以 ARK 趨勢確認為主。"
+      : "大盤回落時不因單日下跌直接停買，仍依缺口與 ARK 趨勢分批處理。";
+  if (absoluteGap <= CONFIG.deadBand)
+    return `目前持倉 ${actual.toFixed(2)}% 與 ARK ${target.toFixed(2)}% 接近，位於 ±${CONFIG.deadBand}% 無動作區間。${trendContext} ${marketContext} 結論：維持持倉，不為小差距產生交易成本；等缺口超過 1% 或 ARK 趨勢進一步確認後再處理。`;
+  if (gap > 0) {
+    const size =
+      gap > CONFIG.defensiveAccumulationGap
+        ? "嚴重低配"
+        : gap > 5
+          ? "中度低配"
+          : "輕度低配";
+    let actionText;
+    if (
+      gap > CONFIG.defensiveAccumulationGap &&
+      !(water.zone === "HIGH" && water.direction === "RISING")
+    )
+      actionText =
+        "缺口雖大，但為避免一次追滿，本次固定使用 1 倍位階股數分批布局";
+    else if (water.zone === "HIGH" && water.direction === "RISING")
+      actionText = `ARK 已進入前 10% 高水位並續升，本次可使用 ${multiplier.toFixed(2)} 倍位階股數加強布局`;
+    else if (fallingConfirmed)
+      actionText = `ARK 趨勢仍弱，本次以 ${multiplier.toFixed(2)} 倍減速布局`;
+    else actionText = `本次依 ${multiplier.toFixed(2)} 倍位階股數分批布局`;
+    return `目前持倉 ${actual.toFixed(2)}% 低於 ARK ${target.toFixed(2)}%，缺口 ${gap.toFixed(2)}%，屬於${size}。${trendContext} ${marketContext} 結論：${actionText}，不建議為追上目標一次買滿；後續只在 ARK 續升或缺口仍大時逐批補足。`;
+  }
+  const size =
+    absoluteGap > 5 ? "明顯超配" : absoluteGap > 2 ? "中度超配" : "輕微超配";
+  let actionText;
+  if (water.zone === "HIGH" && water.direction === "RISING")
+    actionText =
+      "ARK 位於前 10% 高水位且續升，暫不賣出，等待 ARK 轉弱再重新評估";
+  else if (absoluteGap <= 2)
+    actionText =
+      "差距仍小，先不急著賣；只有 ARK 繼續下降並形成趨勢時才小幅調節";
+  else if (fallingConfirmed && d.action === "SELL")
+    actionText = `ARK 降風險趨勢已確認，可處理超額部位的 ${(d.rate * 100).toFixed(0)}%，預計把配置由 ${actual.toFixed(2)}% 降至 ${d.target.toFixed(2)}%`;
+  else
+    actionText =
+      "目前只有超額事實、尚缺持續下降確認，先觀察；不因大盤單獨創高立即賣出";
+  return `目前持倉 ${actual.toFixed(2)}% 高於 ARK ${target.toFixed(2)}%，超額 ${absoluteGap.toFixed(2)}%，屬於${size}。${trendContext} ${marketContext} 結論：${actionText}。`;
+}
 function buildTrendSummary(d, input = { todayArk: 0, actualAllocation: 0 }) {
   const allRecords = recordsWithCurrentMarket(
       window.centralRecords || [],
@@ -1997,7 +2059,7 @@ function buildTrendSummary(d, input = { todayArk: 0, actualAllocation: 0 }) {
         ? `今日 ARK 比昨日降低 ${Math.abs(d.trend.delta1D).toFixed(2)}%，風險水位正在下調。`
         : "今日 ARK 與昨日相同，風險水位暫時持平。";
   if (records.length < 2)
-    return `${arkText} 同步更多日期與大盤指數後，可加入新高與兩者方向的判讀。`;
+    return `${arkText} 同步更多日期與大盤指數後，可加入新高與兩者方向的判讀。 ${buildAllocationSummary(d, input)}`;
   let comparable = 0,
     same = 0;
   for (let i = 1; i < records.length; i++) {
@@ -2042,8 +2104,7 @@ function buildTrendSummary(d, input = { todayArk: 0, actualAllocation: 0 }) {
   else if ((isRecordHigh || nearRecordHigh) && d.trend.delta1D > 0)
     divergenceText =
       "大盤位於新高附近且 ARK 同步上調，趨勢仍偏強，但加碼應維持分批，避免一次追價。";
-  const gap = d.gap,
-    water = d.waterLevelState || arkWaterLevelState(input, d),
+  const water = d.waterLevelState || arkWaterLevelState(input, d),
     levels = water.levels,
     waterText =
       water.zone === "HIGH" && water.direction === "RISING"
@@ -2051,12 +2112,11 @@ function buildTrendSummary(d, input = { todayArk: 0, actualAllocation: 0 }) {
         : water.zone === "LOW" && water.direction === "FALLING"
           ? `ARK 位於後 10% 低水位（${levels.min}%～${levels.lowerDecile}%）並續降，視為模型降低風險：布局最多 1 倍，持倉超額時才分批調節。`
           : `ARK 尚未同時符合極端水位與延續方向，維持一般分批規則。`,
-    allocationText =
-      Math.abs(gap) <= CONFIG.deadBand
-        ? `目前持倉 ${input.actualAllocation.toFixed(2)}% 與 ARK ${input.todayArk.toFixed(2)}% 接近，位於 ±${CONFIG.deadBand}% 無動作區間，沒有必要為小差距交易。`
-        : gap > 0
-          ? `目前持倉 ${input.actualAllocation.toFixed(2)}% 低於 ARK ${input.todayArk.toFixed(2)}%，缺口 ${gap.toFixed(2)}%；${gap > CONFIG.defensiveAccumulationGap && !(water.zone === "HIGH" && water.direction === "RISING") ? "本次只使用 1 倍位階股數分批補足" : "可依辨識出的位階股數乘倍率分批補足"}，不建議為追上目標一次買滿。`
-          : `目前持倉 ${input.actualAllocation.toFixed(2)}% 高於 ARK ${input.todayArk.toFixed(2)}%，超額 ${Math.abs(gap).toFixed(2)}%；若 ARK 持續下降，再依調節速度逐步降低，而不是只因大盤創高立即賣出。`;
+    allocationText = buildAllocationSummary(d, input, {
+      isRecordHigh,
+      nearRecordHigh,
+      indexChangePercent,
+    });
   return `${arkText} ${marketText} ${divergenceText} ${waterText} ${allocationText}`;
 }
 function quantile(values, p) {
@@ -2995,6 +3055,58 @@ function runSelfTests() {
       });
     return d.action === "HOLD" && d.rate === 0 && d.target === 90;
   });
+  test("超大低配總結會明確顯示1倍布局", () => {
+    const input = { todayArk: 66.8, actualAllocation: 20 },
+      d = {
+        action: "BUY",
+        gap: 46.8,
+        rate: 0.1,
+        target: 24.68,
+        trend: { delta1D: -1, delta3D: -2, delta5D: -3 },
+        waterLevelState: {
+          zone: "NORMAL",
+          direction: "FALLING",
+          value: 66.8,
+          levels: CONFIG.arkWaterLevels,
+        },
+        _v2Plan: { dynamicScale: 1 },
+      };
+    return buildAllocationSummary(d, input).includes("固定使用 1 倍");
+  });
+  test("小幅超配總結會等待ARK趨勢確認", () => {
+    const input = { todayArk: 66.8, actualAllocation: 68 },
+      d = {
+        action: "HOLD",
+        gap: -1.2,
+        rate: 0,
+        target: 68,
+        trend: { delta1D: 0.1, delta3D: -0.2, delta5D: 0.1 },
+        waterLevelState: {
+          zone: "NORMAL",
+          direction: "RISING",
+          value: 66.8,
+          levels: CONFIG.arkWaterLevels,
+        },
+      };
+    return buildAllocationSummary(d, input).includes("只有 ARK 繼續下降");
+  });
+  test("明顯超配且ARK持續下降會顯示調節幅度", () => {
+    const input = { todayArk: 66.8, actualAllocation: 80 },
+      d = {
+        action: "SELL",
+        gap: -13.2,
+        rate: 0.5,
+        target: 73.4,
+        trend: { delta1D: -1, delta3D: -3, delta5D: -5 },
+        waterLevelState: {
+          zone: "NORMAL",
+          direction: "FALLING",
+          value: 66.8,
+          levels: CONFIG.arkWaterLevels,
+        },
+      };
+    return buildAllocationSummary(d, input).includes("超額部位的 50%");
+  });
   const v2 = window.BuyEngineV2.runBuyEngineSelfTests();
   v2.tests.forEach((x) => tests.push([`BUY V2 · ${x.name}`, x.ok]));
   const passed = tests.filter((t) => t[1]).length,
@@ -3131,6 +3243,7 @@ window.ARKStrategyLab = {
   buildArkLevelEvents,
   summarizeArkEvents,
   summarizePositionExecution,
+  buildAllocationSummary,
   buildTrendSummary,
   saveDailySnapshot,
   loadHistory,
