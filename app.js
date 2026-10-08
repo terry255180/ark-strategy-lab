@@ -194,9 +194,9 @@ const dataProvider = CONFIG.googleSheets?.enabled
   : new LocalDataProvider();
 
 function applyCentralData(data) {
-  const records = (data?.records || []).filter(
-    (row) => row.date && Number.isFinite(Number(row.arkAllocation)),
-  );
+  const records = (data?.records || [])
+    .filter((row) => row.date && Number.isFinite(Number(row.arkAllocation)))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
   if (!records.length) return false;
   window.centralRecords = records.map((row) => ({
     ...row,
@@ -3933,17 +3933,27 @@ async function init() {
     $("ocrStatus").textContent =
       "圖片辨識需要本機網頁伺服器：請改為雙擊「啟動網站.cmd」開啟。";
   }
-  renderDashboard();
-  renderHistory();
-  runSelfTests();
   const cached = await dataProvider.getCentralData();
-  if (cached) {
+  if (CONFIG.googleSheets?.webAppUrl) {
+    [
+      "yesterdayArk",
+      "ark3D",
+      "ark5D",
+      "peak10D",
+      "cnn",
+      "rsi",
+      "margin",
+    ].forEach((id) => ($(id).value = ""));
+    $("syncStatus").textContent = "更新最新交易日資料中…";
+  } else if (cached) {
     applyCentralData(cached);
     $("syncStatus").textContent =
       `使用快取 · ${new Date(cached.syncedAt).toLocaleDateString("zh-TW")}`;
-  }
-  if (CONFIG.googleSheets?.webAppUrl) syncCentralData({ silent: true });
-  else $("syncStatus").textContent = "待設定 Google 同步";
+  } else $("syncStatus").textContent = "待設定 Google 同步";
+  renderDashboard();
+  renderHistory();
+  runSelfTests();
+  if (CONFIG.googleSheets?.webAppUrl) await syncCentralData({ silent: true });
 }
 document.addEventListener("DOMContentLoaded", init);
 
