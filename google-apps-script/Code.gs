@@ -71,9 +71,10 @@ function getSecurityReturns_(event) {
   const symbols = [...new Set(raw.toUpperCase().split(',').map(value => value.replace(/[^0-9A-Z]/g, '')).filter(value => /^\d{4,6}[A-Z]?$/.test(value)))].slice(0, 40);
   if (!symbols.length) return { ok: true, source: 'Yahoo Finance adjusted close', items: [] };
   const cache = CacheService.getScriptCache();
+  const cacheVersion = 'v2';
   const items = [], missing = [];
   symbols.forEach(symbol => {
-    const cached = cache.get(`return_${symbol}`);
+    const cached = cache.get(`return_${cacheVersion}_${symbol}`);
     if (cached) {
       try { items.push(JSON.parse(cached)); return; } catch (_) {}
     }
@@ -98,7 +99,7 @@ function getSecurityReturns_(event) {
         item = { symbol, error: String(error && error.message || error) };
       }
       items.push(item);
-      if (!item.error) cache.put(`return_${symbol}`, JSON.stringify(item), 43200);
+      if (!item.error) cache.put(`return_${cacheVersion}_${symbol}`, JSON.stringify(item), 43200);
     });
   }
   const order = Object.fromEntries(symbols.map((symbol, index) => [symbol, index]));
