@@ -184,7 +184,7 @@ function renderReturnRanking(holdings,key,title){
   return `<section class="return-rank-card"><h4>${safe(title)}</h4>${rows||`<p class="note">尚無可排名資料</p>`}</section>`;
 }
 function renderPerformanceComparison(plan){
-  const rows=plan.scored.map(h=>{const r=h.periodReturns||{};return `<tr><td><strong>${safe(h.symbol)}</strong><small>${safe(h.name)}</small></td><td>${returnHtml(h.profitPercent)}</td><td>${returnHtml(r.ytd)}</td><td>${returnHtml(r.oneYear)}</td><td>${returnHtml(r.threeYear)}</td><td>${returnHtml(r.threeYearAnnualized)}</td><td>${h.performance?.percentile==null?"—":`${Math.round(h.performance.percentile*100)}%`}</td></tr>`;}).join("");
+  const rows=plan.scored.map(h=>{const r=h.periodReturns||{},adjustment=r.adjustmentMethod==="split_adjusted_close_plus_dividends"?`分割調整 ×${r.splitsApplied||0}`:r.adjustmentMethod==="yahoo_adjusted_close"?"Yahoo 調整價":"舊版資料";return `<tr><td><strong>${safe(h.symbol)}</strong><small>${safe(h.name)}</small><small>${adjustment}</small></td><td>${returnHtml(h.profitPercent)}</td><td>${returnHtml(r.ytd)}</td><td>${returnHtml(r.oneYear)}</td><td>${returnHtml(r.threeYear)}</td><td>${returnHtml(r.threeYearAnnualized)}</td><td>${h.performance?.percentile==null?"—":`${Math.round(h.performance.percentile*100)}%`}</td></tr>`;}).join("");
   const loaded=plan.scored.some(h=>h.periodReturns&&!h.periodReturns.error);
   const status=performanceLoading?"正在取得期間報酬…":loaded?"以含息調整價估算；三個期間各自獨立排名，同類綜合排名只小幅影響調節順位。":"期間報酬尚未取得；目前方案仍可依其他風控條件計算。";
   const rankings=`<div class="return-rank-grid">${renderReturnRanking(plan.scored,"ytd","今年至今排名")}${renderReturnRanking(plan.scored,"oneYear","1 年排名")}${renderReturnRanking(plan.scored,"threeYear","3 年累積排名")}</div>`;
@@ -231,7 +231,7 @@ async function refreshPerformance(force=false){
   const cached=loadPerformanceCache(),maxAge=(C.performance.cacheHours||12)*3600000;
   const cachedSymbols=new Set((cached?.items||[]).filter(item=>!item.error&&[item.ytd,item.oneYear,item.threeYear].some(value=>optional(value)!=null)).map(item=>String(item.symbol||"").toUpperCase()));
   if(!force&&cached?.savedAt&&Date.now()-cached.savedAt<maxAge&&symbols.every(symbol=>cachedSymbols.has(symbol))){applyPerformance(cached.items);return;}
-  const endpoint=CONFIG.imageImport?.visionEndpoint||CONFIG.googleSheets?.webAppUrl;if(!endpoint)return;
+  const endpoint=CONFIG.googleSheets?.webAppUrl||CONFIG.imageImport?.visionEndpoint;if(!endpoint)return;
   performanceLoading=true;if(lastPlan)renderRebalanceCalculator();
   try{const url=new URL(endpoint);url.searchParams.set("action","returns");url.searchParams.set("symbols",symbols.join(","));const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();if(!data.ok||!Array.isArray(data.items))throw new Error(data.error||"期間報酬格式錯誤");applyPerformance(data.items);localStorage.setItem(C.storageKeys.performance,JSON.stringify({savedAt:Date.now(),items:data.items,source:data.source,asOf:data.asOf}));}
   catch(error){console.warn("ETF performance unavailable",error);}
