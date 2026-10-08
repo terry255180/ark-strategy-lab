@@ -64,7 +64,7 @@ function calculatePerformanceScores(holdings){
     let weighted=0,totalWeight=0,available=0;
     for(const [key,weight] of metrics){
       const value=optional(h.periodReturns?.[key]);if(value==null)continue;
-      const peers=holdings.filter(peer=>peer.exposureGroup===h.exposureGroup&&optional(peer.periodReturns?.[key])!=null).map(peer=>Number(peer.periodReturns[key])).sort((a,b)=>a-b);
+      const peers=holdings.filter(peer=>optional(peer.periodReturns?.[key])!=null).map(peer=>Number(peer.periodReturns[key])).sort((a,b)=>a-b);
       if(peers.length<(cfg.minimumPeers||2))continue;
       const below=peers.filter(peerValue=>peerValue<value).length,equal=peers.filter(peerValue=>peerValue===value).length;
       weighted+=((below+Math.max(0,equal-1)/2)/(peers.length-1))*weight;totalWeight+=weight;available++;
@@ -74,6 +74,8 @@ function calculatePerformanceScores(holdings){
     const points=percentile<.5?Math.round((.5-percentile)*2*(cfg.weakMaxPoints||6)): -Math.round((percentile-.5)*2*(cfg.strongMaxDiscount||4));
     result.set(h.symbol,{percentile,points,available});
   }
+  const ranked=[...result.entries()].filter(([,value])=>value.percentile!=null).sort((a,b)=>b[1].percentile-a[1].percentile||String(a[0]).localeCompare(String(b[0])));
+  ranked.forEach(([symbol,value],index)=>result.set(symbol,{...value,rank:index+1,total:ranked.length}));
   return result;
 }
 function generateSellReasons(h,x){
@@ -101,12 +103,13 @@ function calculateSellPriority(h,context){
   if(h.leveraged)score+=p.leverage+(singleWeight>=lim.singleHigh&&groupWeight>=lim.groupHigh&&marketFactor>1?p.leverageCluster:0);
   const smallCleanup=!h.inArkToday&&h.valueTag!=="YES"&&singleWeight<C.priority.smallPositionRatio;
   if(smallCleanup)score+=p.smallCleanup;
-  const performance=context.performanceScores?.get(h.symbol)||{percentile:null,points:0,available:0};
+  const performance=context.performanceScores?.get(h.symbol)||{percentile:null,points:0,available:0,rank:null,total:0};
   score=cap(Math.round(score*marketFactor+profitBuffer+performance.points),0,100);
   const priorityLevel=score>=p.levels.veryHigh?"VERY_HIGH":score>=p.levels.high?"HIGH":score>=p.levels.medium?"MEDIUM":score>=p.levels.watch?"WATCH":"LOW";
   const detail={...h,singleWeight,groupWeight,persistence,marketFactor,profitBuffer,performance,smallCleanup,sellPriorityScore:score,priorityLevel};
-  if(performance.points>0)detail.performanceReason=`同類標的多期績效偏弱，順位 +${performance.points}`;
-  else if(performance.points<0)detail.performanceReason=`同類標的多期績效偏強，順位 ${performance.points}`;
+  if(performance.rank!=null&&performance.points>0)detail.performanceReason=`庫存多期報酬第 ${performance.rank}/${performance.total} 名，表現偏弱，調節順位 +${performance.points}`;
+  else if(performance.rank!=null&&performance.points<0)detail.performanceReason=`庫存多期報酬第 ${performance.rank}/${performance.total} 名，表現偏強，調節順位 ${performance.points}`;
+  else if(performance.rank!=null)detail.performanceReason=`庫存多期報酬第 ${performance.rank}/${performance.total} 名，對調節順位影響中性`;
   detail.sellReasons=generateSellReasons(h,detail);return detail;
 }
 function marketMetrics(records,rsi,margin){
@@ -184,11 +187,11 @@ function renderReturnRanking(holdings,key,title){
   return `<section class="return-rank-card"><h4>${safe(title)}</h4>${rows||`<p class="note">尚無可排名資料</p>`}</section>`;
 }
 function renderPerformanceComparison(plan){
-  const rows=plan.scored.map(h=>{const r=h.periodReturns||{},adjustment=r.adjustmentMethod==="split_adjusted_close_plus_dividends"?`分割調整 ×${r.splitsApplied||0}`:r.adjustmentMethod==="yahoo_adjusted_close"?"Yahoo 調整價":"舊版資料";return `<tr><td><strong>${safe(h.symbol)}</strong><small>${safe(h.name)}</small><small>${adjustment}</small></td><td>${returnHtml(h.profitPercent)}</td><td>${returnHtml(r.ytd)}</td><td>${returnHtml(r.oneYear)}</td><td>${returnHtml(r.threeYear)}</td><td>${returnHtml(r.threeYearAnnualized)}</td><td>${h.performance?.percentile==null?"—":`${Math.round(h.performance.percentile*100)}%`}</td></tr>`;}).join("");
+  const rows=plan.scored.map(h=>{const r=h.periodReturns||{},adjustment=r.adjustmentMethod==="split_adjusted_close_plus_dividends"?`分割調整 ×${r.splitsApplied||0}`:r.adjustmentMethod==="yahoo_adjusted_close"?"Yahoo 調整價":"舊版資料";return `<tr><td><strong>${safe(h.symbol)}</strong><small>${safe(h.name)}</small><small>${adjustment}</small></td><td>${returnHtml(h.profitPercent)}</td><td>${returnHtml(r.ytd)}</td><td>${returnHtml(r.oneYear)}</td><td>${returnHtml(r.threeYear)}</td><td>${returnHtml(r.threeYearAnnualized)}</td></tr>`;}).join("");
   const loaded=plan.scored.some(h=>h.periodReturns&&!h.periodReturns.error);
-  const status=performanceLoading?"正在取得期間報酬…":loaded?"以含息調整價估算；三個期間各自獨立排名，同類綜合排名只小幅影響調節順位。":"期間報酬尚未取得；目前方案仍可依其他風控條件計算。";
+  const status=performanceLoading?"正在取得期間報酬…":loaded?"以含息調整價估算；今年至今 25%、1 年 35%、3 年年化 40% 納入建議，弱勢標的提高調節優先度、強勢標的降低優先度。":"期間報酬尚未取得；目前方案仍可依其他風控條件計算。";
   const rankings=`<div class="return-rank-grid">${renderReturnRanking(plan.scored,"ytd","今年至今排名")}${renderReturnRanking(plan.scored,"oneYear","1 年排名")}${renderReturnRanking(plan.scored,"threeYear","3 年累積排名")}</div>`;
-  return `<div class="rebalance-plan rebalance-performance"><h3>庫存報酬比較與排行</h3>${rankings}<div class="rebalance-table-wrap"><table><thead><tr><th>標的</th><th>持有報酬</th><th>今年至今</th><th>1 年</th><th>3 年累積</th><th>3 年年化</th><th>同類綜合排名</th></tr></thead><tbody>${rows}</tbody></table></div><p class="note">${status}</p></div>`;
+  return `<div class="rebalance-plan rebalance-performance"><h3>庫存報酬比較與排行</h3>${rankings}<div class="rebalance-table-wrap"><table><thead><tr><th>標的</th><th>持有報酬</th><th>今年至今</th><th>1 年</th><th>3 年累積</th><th>3 年年化</th></tr></thead><tbody>${rows}</tbody></table></div><p class="note">${status}</p></div>`;
 }
 function renderSellExplanation(plan){const top=plan.primary.soldHoldings[0];const markets=plan.allocations;return `<div class="rebalance-mini"><strong>為何如此調節</strong><p>ARK 賣出引擎狀態：${safe(regimeZh(plan.decision.regime))}。台股分配約 ${(markets.TW.share*100).toFixed(0)}%、美股／全球約 ${(markets["US / GLOBAL"].share*100).toFixed(0)}%；這是依市場與持股風險動態估算，非固定比例。${top?`優先處理 ${safe(top.symbol)}：${top.sellReasons.slice(0,4).map(safe).join("、")}。`:"請提供有效持股資料以產生實際賣單。"}市場冷熱只調整順序，不單獨決定買賣。</p></div>`;}
 function renderRebalanceCalculator(){
@@ -252,7 +255,7 @@ function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push(
   test("剛離開 ARK 不強制賣",()=>calculateArkPersistence({...raw[0],inArkToday:false,daysOutOfArk:1}).strongExit===false);
   test("虧損不自動保護",()=>calculateSellPriority({...raw[0],profitPercent:-20},context).sellPriorityScore>0);
   const performanceScores=calculatePerformanceScores([{symbol:"LOW",exposureGroup:"TEST",periodReturns:{ytd:-5,oneYear:0,threeYearAnnualized:2}},{symbol:"HIGH",exposureGroup:"TEST",periodReturns:{ytd:15,oneYear:20,threeYearAnnualized:18}}]);
-  test("同類多期弱勢只小幅提高調節順位",()=>performanceScores.get("LOW").points===C.performance.weakMaxPoints&&performanceScores.get("HIGH").points===-C.performance.strongMaxDiscount);
+  test("庫存多期弱勢提高、強勢降低調節順位",()=>performanceScores.get("LOW").points===C.performance.weakMaxPoints&&performanceScores.get("LOW").rank===2&&performanceScores.get("HIGH").points===-C.performance.strongMaxDiscount&&performanceScores.get("HIGH").rank===1);
   const ranked=[{symbol:"A",periodReturns:{ytd:20,oneYear:5,threeYear:30}},{symbol:"B",periodReturns:{ytd:10,oneYear:25,threeYear:40}}];
   test("今年、1年、3年報酬各自獨立排名",()=>rankHoldingsByReturn(ranked,"ytd")[0].symbol==="A"&&rankHoldingsByReturn(ranked,"oneYear")[0].symbol==="B"&&rankHoldingsByReturn(ranked,"threeYear")[0].symbol==="B");
   const opt=optimizeSellShares(40000,scored,{oddLot:true,allowFullExit:false,regime:"RISK_OFF"});
