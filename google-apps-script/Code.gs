@@ -143,8 +143,9 @@ function calculateReturnsFromYahoo_(symbol, body) {
 function doPost(event) {
   try {
     const request = JSON.parse(event && event.postData && event.postData.contents || '{}');
-    if (request.action !== 'vision') return jsonOutput({ ok: false, error: '不支援的操作。' });
-    return jsonOutput(analyzeArkImages_(request));
+    if (request.action === 'vision') return jsonOutput(analyzeArkImages_(request));
+    if (request.action === 'rebalanceVision') return jsonOutput(analyzeHoldingImages_(request));
+    return jsonOutput({ ok: false, error: '不支援的操作。' });
   } catch (error) {
     return jsonOutput({ ok: false, error: String(error && error.message || error) });
   }
@@ -225,6 +226,122 @@ function analyzeArkImages_(request) {
   const items = normalizeGeminiItems_(parsed.items || []);
   if (!items.length) throw new Error('Gemini 沒有辨識出 ETF。');
   return { ok: true, provider: 'gemini', model, detectedRows: items.length, items };
+}
+
+function analyzeHoldingImages_(request) {
+  const properties = PropertiesService.getScriptProperties();
+  const apiKey = properties.getProperty('GEMINI_API_KEY');
+  const accessToken = properties.getProperty('VISION_ACCESS_TOKEN');
+  if (!apiKey) throw new Error('Apps Script 尚未設定 GEMINI_API_KEY。');
+  if (!accessToken) throw new Error('Apps Script 尚未設定 VISION_ACCESS_TOKEN。');
+  if (!request.token || request.token !== accessToken) throw new Error('AI 辨識密碼不正確。');
+
+  const images = Array.isArray(request.images) ? request.images.slice(0, 4) : [];
+  if (!images.length) throw new Error('沒有收到圖片。');
+  let totalLength = 0;
+  images.forEach((image, index) => {
+    if (!image || !/^image\/(jpeg|jpg|png|webp|heic|heif)$/i.test(String(image.mimeType || ''))) throw new Error(`第 ${index + 1} 張圖片格式不支援。`);
+    if (!image.data || String(image.data).length > 5500000) throw new Error(`第 ${index + 1} 張圖片過大。`);
+    totalLength += String(image.data).length;
+  });
+  if (totalLength > 12000000) throw new Error('圖片總大小超過 9MB，請減少張數或使用原始截圖。');
+  enforceVisionDailyLimit_(properties);
+
+  const model = properties.getProperty('GEMINI_MODEL') || 'gemini-3.5-flash-lite';
+  const parts = [{ text: buildHoldingVisionPrompt_() }].concat(images.map(image => ({
+    inlineData: { mimeType: image.mimeType, data: image.data }
+  })));
+  const schema = {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            symbol: { type: 'string', description: '股票或 ETF 代號' },
+            name: { type: 'string', description: '股票或 ETF 名稱' },
+            shares: { type: 'integer', description: '持有股數或庫存量' },
+            currentPrice: { type: 'number', description: '目前價格或成交價' },
+            marketValue: { type: 'number', description: '目前市值；若畫面只有成本與損益則以兩者相加' },
+            profitAmount: { type: 'number', description: '未實現損益金額，保留正負號' },
+            profitPercent: { type: 'number', description: '未實現損益百分比，保留正負號' },
+            marketRegion: { type: 'string', description: 'TW、US、GLOBAL 或 OTHER' }
+          },
+          required: ['symbol', 'name']
+        }
+      }
+    },
+    required: ['items']
+  };
+  const payload = {
+    contents: [{ role: 'user', parts }],
+    generationConfig: {
+      temperature: 0,
+      responseMimeType: 'application/json',
+      responseSchema: schema
+    }
+  };
+  const response = UrlFetchApp.fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'x-goog-api-key': apiKey },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+  const status = response.getResponseCode();
+  const bodyText = response.getContentText();
+  if (status < 200 || status >= 300) {
+    let detail = bodyText;
+    try { detail = JSON.parse(bodyText).error.message || bodyText; } catch (_) {}
+    throw new Error(`Gemini API ${status}：${String(detail).slice(0, 240)}`);
+  }
+  const body = JSON.parse(bodyText);
+  const text = (((body.candidates || [])[0] || {}).content || {}).parts;
+  const jsonText = Array.isArray(text) ? text.map(part => part.text || '').join('') : '';
+  if (!jsonText) throw new Error('Gemini 沒有回傳可用資料。');
+  const parsed = JSON.parse(jsonText);
+  const items = normalizeGeminiHoldingItems_(parsed.items || []);
+  if (!items.length) throw new Error('Gemini 沒有辨識出持股。');
+  return { ok: true, provider: 'gemini', model, detectedRows: items.length, items };
+}
+
+function buildHoldingVisionPrompt_() {
+  return [
+    '你正在辨識券商 App 的持股庫存或庫存損益截圖。多張圖片可能有重疊列，最後只保留每個股票或 ETF 一筆。',
+    '逐列讀取股票代號、名稱、持有股數、目前價格、目前市值、未實現損益金額與未實現損益百分比，所有正負號都必須保留。',
+    '台股代號通常是 4 至 6 位數字，可能帶尾端英文字母；美股代號通常是 1 至 5 位英文字母。不要把欄位標題、幣別、日期或總計當成代號。',
+    '若畫面顯示總成本而非目前市值，可用總成本加未實現損益金額得到目前市值；只有在股數與市值都可靠時才推算目前價格。',
+    '不要將總成本誤填成市值，不要將報酬率誤填成價格。看不清楚的欄位保留空值，不可補零或虛構資料。',
+    'marketRegion 使用 TW、US、GLOBAL 或 OTHER。逐列掃描圖片中所有持股，僅回傳符合指定 JSON schema 的結果。'
+  ].join('\n');
+}
+
+function normalizeGeminiHoldingItems_(rawItems) {
+  const map = {};
+  (rawItems || []).forEach(raw => {
+    const symbol = String(raw.symbol || '').toUpperCase().replace(/[^0-9A-Z]/g, '').replace(/^O(?=\d)/, '0');
+    if (!/^(?:\d{4,6}[A-Z]?|[A-Z]{1,5})$/.test(symbol) || /^(?:TW|US|ETF|NAV|USD|TWD|TOTAL|QTY|PRICE|VALUE|SHARE|PCT|COST|PROFIT|LOSS|RSI|PNL|ARK)$/.test(symbol)) return;
+    const sharesValue = integerOrNull_(raw.shares);
+    const item = {
+      symbol,
+      name: String(raw.name || '').trim() || symbol,
+      shares: sharesValue && sharesValue > 0 ? sharesValue : null,
+      currentPrice: numberOrNull_(raw.currentPrice),
+      marketValue: numberOrNull_(raw.marketValue),
+      profitAmount: numberOrNull_(raw.profitAmount),
+      profitPercent: numberOrNull_(raw.profitPercent),
+      marketRegion: /^(TW|US|GLOBAL|OTHER)$/.test(String(raw.marketRegion || '').toUpperCase())
+        ? String(raw.marketRegion).toUpperCase()
+        : /^\d/.test(symbol) ? 'TW' : 'US'
+    };
+    if (!(item.currentPrice > 0) && item.shares > 0 && item.marketValue > 0) item.currentPrice = Math.round(item.marketValue / item.shares * 100) / 100;
+    if (!(item.marketValue > 0) && item.shares > 0 && item.currentPrice > 0) item.marketValue = Math.round(item.shares * item.currentPrice * 100) / 100;
+    const old = map[symbol];
+    if (!old) map[symbol] = item;
+    else Object.keys(item).forEach(key => { if ((old[key] === null || old[key] === '') && item[key] !== null && item[key] !== '') old[key] = item[key]; });
+  });
+  return Object.keys(map).map(key => map[key]);
 }
 
 function buildArkVisionPrompt_() {

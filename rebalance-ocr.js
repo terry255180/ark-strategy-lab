@@ -129,18 +129,35 @@ function clear(){urls.forEach(URL.revokeObjectURL);urls=[];files=[];rows=[];$("r
 async function prepare(file){const bitmap=await createImageBitmap(file),scale=Math.min(1.6,2000/bitmap.width,Math.sqrt(5000000/(bitmap.width*bitmap.height))),canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));canvas.getContext("2d").drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();return canvas;}
 async function recognize(){
   if(busy)return;if(location.protocol==="file:"){setStatus("請透過本機伺服器或 GitHub Pages 開啟網站後辨識。");return;}
-  if(!window.Tesseract){setStatus("本機 OCR 模型未載入，請確認 vendor/tesseract 檔案已部署。");return;}
+  if(!window.geminiRebalanceVisionExtractor&&!window.Tesseract){setStatus("Gemini 與本機 OCR 都未成功載入，請重新整理後再試。");return;}
   busy=true;$("rebalanceRunOcr").disabled=true;$("rebalanceOcrProgress").hidden=false;$("rebalanceOcrProgressBar").style.width="2%";let worker;
   try{
+    if(window.geminiRebalanceVisionExtractor){
+      try{
+        setStatus("正在使用 Gemini AI 分析持股明細…");$("rebalanceOcrProgressBar").style.width="35%";
+        const extraction=await window.geminiRebalanceVisionExtractor(files);
+        rows=enrichFromExistingETF(mergeRows(extraction.items||[]),window.currentETFs);$("rebalanceOcrProgressBar").style.width="100%";
+        applyRows("Gemini AI");return;
+      }catch(visionError){
+        console.warn("Gemini rebalance vision fallback",visionError);
+        setStatus(`Gemini 暫時無法使用（${String(visionError?.message||visionError).slice(0,80)}），正在改用本機 OCR…`);
+      }
+    }
+    if(!window.Tesseract)throw new Error("本機 OCR 模型未載入，請確認 vendor/tesseract 檔案已部署。");
     const mobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     worker=await Tesseract.createWorker(["eng"],Tesseract.OEM.LSTM_ONLY,{workerPath:"vendor/tesseract/worker.min.js",langPath:"vendor/tesseract/lang",corePath:"vendor/tesseract",logger:msg=>{if(msg.progress!=null)$("rebalanceOcrProgressBar").style.width=`${Math.round(msg.progress*80)}%`;}});
     await worker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT,preserve_interword_spaces:"1"});
     const detected=[];for(let i=0;i<files.length;i++){setStatus(`正在辨識第 ${i+1}/${files.length} 張…`);let canvas;try{canvas=await prepare(files[i]);const result=await worker.recognize(canvas,{}, {text:true,blocks:true}),words=normalizeWords(result.data.blocks),layout=parseArkPortfolioWords(words,canvas.width),generic=[...parseHoldingWords(words,canvas.width),...parseHoldingText(result.data.text)].filter(r=>r.shares>0&&r.currentPrice>0);if(layout.length)await recoverArkShares(worker,canvas,words,layout);detected.push(...(layout.length?layout:generic));}finally{if(canvas){canvas.width=1;canvas.height=1;}}}
-    rows=enrichFromExistingETF(mergeRows(detected),window.currentETFs);$("rebalanceOcrProgressBar").style.width="100%";
-    if(rows.length){const {accepted,skipped}=eligible(rows);if(accepted.length)window.RebalanceCalculator.importHoldingRows(accepted.map(({warnings,...r})=>r));const missing=skipped.map(r=>r.symbol||"未辨識代號").join("、");setStatus(`已套用 ${accepted.length} 檔持股，請展開下方逐筆核對股數、價格與估算市值。${skipped.length?`${skipped.length} 檔（${missing}）資料不足，未套用；請補拍或手動新增。`:""}${mobile?"手機版名稱可能需要手動修正。":""}`);urls.forEach(URL.revokeObjectURL);urls=[];$("rebalanceOcrPreview").innerHTML="";if(accepted.length)$("rebalanceHoldings").scrollIntoView({behavior:"smooth",block:"start"});}else setStatus("未找到可確認的持股代號；請使用包含代號與持股欄位的清晰庫存截圖。");
+    rows=enrichFromExistingETF(mergeRows(detected),window.currentETFs);$("rebalanceOcrProgressBar").style.width="100%";applyRows(`本機 OCR${mobile?"（手機）":""}`);
   }catch(e){console.error(e);setStatus(`辨識失敗：${String(e?.message||e).slice(0,130)}。請換清晰截圖再試。`);}finally{if(worker)await worker.terminate();$("rebalanceOcrProgress").hidden=true;busy=false;$("rebalanceRunOcr").disabled=!files.length;}
 }
 function eligible(items){const accepted=[],skipped=[];for(const row of items){if(row.symbol&&Number.isInteger(row.shares)&&row.shares>0&&row.currentPrice>0&&row.marketRegion!=="OTHER"&&!row.conflicts?.length&&!(row.marketValue>0&&Math.abs(row.shares*row.currentPrice-row.marketValue)/row.marketValue>.08))accepted.push(row);else skipped.push(row);}return {accepted,skipped};}
+function applyRows(provider){
+  if(!rows.length){setStatus(`${provider} 未找到可確認的持股代號；請使用包含代號與持股欄位的清晰庫存截圖。`);return;}
+  const {accepted,skipped}=eligible(rows);if(accepted.length)window.RebalanceCalculator.importHoldingRows(accepted.map(({warnings,...r})=>r));
+  const missing=skipped.map(r=>r.symbol||"未辨識代號").join("、");setStatus(`${provider} 已套用 ${accepted.length} 檔持股，請展開下方逐筆核對股數、價格與估算市值。${skipped.length?`${skipped.length} 檔（${missing}）資料不足，未套用；請補拍或手動新增。`:""}`);
+  urls.forEach(URL.revokeObjectURL);urls=[];$("rebalanceOcrPreview").innerHTML="";if(accepted.length)$("rebalanceHoldings").scrollIntoView({behavior:"smooth",block:"start"});
+}
 function runOcrSelfTests(){const cases=[],test=(name,fn)=>{try{cases.push([name,Boolean(fn())]);}catch{cases.push([name,false]);}};
   test("台股代號含 006208、00631L、6757、00988A",()=>twSymbol("006208")==="006208"&&twSymbol("00631L")==="00631L"&&twSymbol("6757")==="6757"&&twSymbol("00988A")==="00988A");
   test("台光電報酬率冒號誤辨可修正",()=>{const word=(text,x,y)=>({text,x,y}),items=[word("+174,536",530,100),word("+1,163:19%",530,130),word("15,005",810,100),word("39",810,130),word("2383",120,130)];return parseArkPortfolioWords(items,1000)[0]?.profitPercent===1163.19;});

@@ -591,10 +591,14 @@ function fileToBase64Payload(file) {
     reader.readAsDataURL(file);
   });
 }
-async function extractWithGeminiVision(images) {
+async function extractWithGeminiVision(
+  images,
+  action = "vision",
+  tokenInputId = "visionAccessToken",
+) {
   const endpoint =
       CONFIG.imageImport.visionEndpoint || CONFIG.googleSheets?.webAppUrl,
-    token = $("visionAccessToken")?.value.trim();
+    token = $(tokenInputId)?.value.trim() || $("visionAccessToken")?.value.trim();
   if (!endpoint) throw new Error("尚未設定 Gemini Apps Script 端點");
   if (!token) throw new Error("請先輸入 AI 辨識密碼");
   const payloadImages = await Promise.all(
@@ -604,7 +608,7 @@ async function extractWithGeminiVision(images) {
       method: "POST",
       redirect: "follow",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action: "vision", token, images: payloadImages }),
+      body: JSON.stringify({ action, token, images: payloadImages }),
     });
   if (!response.ok) throw new Error(`Gemini 服務 HTTP ${response.status}`);
   const payload = await response.json();
@@ -615,7 +619,9 @@ async function extractWithGeminiVision(images) {
     provider: payload.provider || "gemini",
   };
 }
-window.geminiVisionExtractor = extractWithGeminiVision;
+window.geminiVisionExtractor = (images) => extractWithGeminiVision(images);
+window.geminiRebalanceVisionExtractor = (images) =>
+  extractWithGeminiVision(images, "rebalanceVision", "rebalanceVisionAccessToken");
 function createImageDataProvider(fallbackExtractor) {
   const providers = window.BuyEngineV2,
     name = CONFIG.imageImport.provider;
@@ -3857,14 +3863,22 @@ function saveETFs() {
   );
 }
 function bind() {
-  $("visionAccessToken").value =
+  const visionTokenInputs = [
+    $("visionAccessToken"),
+    $("rebalanceVisionAccessToken"),
+  ].filter(Boolean);
+  const savedVisionToken =
     localStorage.getItem(CONFIG.storageKeys.visionToken) || "";
-  $("visionAccessToken").addEventListener("input", (event) =>
-    localStorage.setItem(
-      CONFIG.storageKeys.visionToken,
-      event.target.value.trim(),
-    ),
-  );
+  visionTokenInputs.forEach((input) => {
+    input.value = savedVisionToken;
+    input.addEventListener("input", (event) => {
+      const token = event.target.value.trim();
+      localStorage.setItem(CONFIG.storageKeys.visionToken, token);
+      visionTokenInputs.forEach((other) => {
+        if (other !== event.target) other.value = token;
+      });
+    });
+  });
   document
     .querySelectorAll(".inputs-card input,.inputs-card select")
     .forEach((el) => el.addEventListener("input", renderDashboard));

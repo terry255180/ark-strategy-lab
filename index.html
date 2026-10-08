@@ -373,12 +373,22 @@
                 <h3 id="rebalanceOcrTitle">從持股庫存截圖匯入</h3>
                 <p>
                   一次選擇最多 4
-                  張庫存明細截圖。辨識在本機進行；完整資料直接顯示於下方持股，請核對數值。缺漏資料不會自動補零。
+                  張庫存明細截圖。Gemini AI 會辨識代號、股數、價格、市值與損益；完整資料直接顯示於下方持股，請核對數值。缺漏資料不會自動補零。Gemini 無法使用時會改用本機 OCR。
                 </p>
               </div>
-              <span class="badge neutral">本機 OCR</span>
+              <span class="badge buy">Gemini AI</span>
             </div>
             <div class="ocr-actions">
+              <label class="vision-token-field"
+                >AI 辨識密碼<input
+                  id="rebalanceVisionAccessToken"
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder="與動態 ETF 清單共用"
+                /><small
+                  >需與 Apps Script 的 VISION_ACCESS_TOKEN 相同</small
+                ></label
+              >
               <label class="file-button"
                 >選擇截圖<input
                   id="rebalanceOcrImages"
@@ -557,8 +567,8 @@
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="config.js?v=2.5"></script>
     <script src="buy-engine-v2.js?v=2.7"></script>
-    <script src="app.js?v=4.8"></script>
+    <script src="app.js?v=4.9"></script>
     <script src="rebalance.js?v=1.4"></script>
-    <script src="rebalance-ocr.js?v=1.6"></script>
+    <script src="rebalance-ocr.js?v=1.7"></script>
   </body>
 </html>
