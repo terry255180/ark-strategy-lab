@@ -146,6 +146,14 @@ window.CONFIG = Object.freeze({
       inArkDiscount: 5,
       levels: { watch: 25, medium: 45, high: 65, veryHigh: 80 },
     },
+    performance: {
+      enabled: true,
+      weights: { ytd: 0.25, oneYear: 0.35, threeYearAnnualized: 0.4 },
+      weakMaxPoints: 6,
+      strongMaxDiscount: 4,
+      minimumPeers: 2,
+      cacheHours: 12,
+    },
     optimizer: {
       maxHoldings: 40,
       maxSteps: 200000,
@@ -157,6 +165,7 @@ window.CONFIG = Object.freeze({
     storageKeys: {
       state: "arkStrategyLab.rebalance.state.v1",
       history: "arkStrategyLab.rebalance.history.v1",
+      performance: "arkStrategyLab.rebalance.performance.v1",
     },
   },
   deadBand: 1,

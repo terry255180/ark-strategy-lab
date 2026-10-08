@@ -17,8 +17,10 @@ const SAFE_FIELDS = {
   'RSI': 'rsi'
 };
 
-function doGet() {
+function doGet(event) {
   try {
+    const action = String(event && event.parameter && event.parameter.action || 'records');
+    if (action === 'returns') return jsonOutput(getSecurityReturns_(event));
     const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sheet = spreadsheet.getSheetById(SHEET_GID) || spreadsheet.getSheetByName(SHEET_NAME);
     if (!sheet) {
@@ -60,6 +62,82 @@ function doGet() {
   } catch (error) {
     return jsonOutput({ ok: false, error: String(error && error.message || error) });
   }
+}
+
+// 取得庫存標的的含息調整價報酬。資料源若暫時失敗，只回傳該標的錯誤，
+// 不影響試算表同步與調節計算。每檔快取 12 小時以減少外部請求。
+function getSecurityReturns_(event) {
+  const raw = String(event && event.parameter && event.parameter.symbols || '');
+  const symbols = [...new Set(raw.toUpperCase().split(',').map(value => value.replace(/[^0-9A-Z]/g, '')).filter(value => /^\d{4,6}[A-Z]?$/.test(value)))].slice(0, 40);
+  if (!symbols.length) return { ok: true, source: 'Yahoo Finance adjusted close', items: [] };
+  const cache = CacheService.getScriptCache();
+  const items = [], missing = [];
+  symbols.forEach(symbol => {
+    const cached = cache.get(`return_${symbol}`);
+    if (cached) {
+      try { items.push(JSON.parse(cached)); return; } catch (_) {}
+    }
+    missing.push(symbol);
+  });
+  if (missing.length) {
+    const now = Math.floor(Date.now() / 1000);
+    const start = now - 5 * 366 * 86400;
+    const requests = missing.map(symbol => ({
+      url: `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol + '.TW')}?period1=${start}&period2=${now + 86400}&interval=1d&events=div%2Csplits`,
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      muteHttpExceptions: true
+    }));
+    const responses = UrlFetchApp.fetchAll(requests);
+    responses.forEach((response, index) => {
+      const symbol = missing[index];
+      let item;
+      try {
+        if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) throw new Error(`HTTP ${response.getResponseCode()}`);
+        item = calculateReturnsFromYahoo_(symbol, JSON.parse(response.getContentText()));
+      } catch (error) {
+        item = { symbol, error: String(error && error.message || error) };
+      }
+      items.push(item);
+      if (!item.error) cache.put(`return_${symbol}`, JSON.stringify(item), 43200);
+    });
+  }
+  const order = Object.fromEntries(symbols.map((symbol, index) => [symbol, index]));
+  items.sort((a, b) => order[a.symbol] - order[b.symbol]);
+  return { ok: true, source: 'Yahoo Finance adjusted close', returnType: 'adjusted_total_return_estimate', asOf: new Date().toISOString(), items };
+}
+
+function calculateReturnsFromYahoo_(symbol, body) {
+  const result = body && body.chart && body.chart.result && body.chart.result[0];
+  if (!result) throw new Error('查無歷史行情');
+  const timestamps = result.timestamp || [];
+  const adj = result.indicators && result.indicators.adjclose && result.indicators.adjclose[0] && result.indicators.adjclose[0].adjclose || [];
+  const points = timestamps.map((timestamp, index) => ({ timestamp, value: Number(adj[index]) })).filter(point => isFinite(point.value) && point.value > 0);
+  if (points.length < 2) throw new Error('歷史資料不足');
+  const latest = points[points.length - 1];
+  const latestDate = new Date(latest.timestamp * 1000);
+  const atOrBefore = target => {
+    const targetTime = Math.floor(target.getTime() / 1000);
+    for (let index = points.length - 1; index >= 0; index--) if (points[index].timestamp <= targetTime) return points[index];
+    return null;
+  };
+  const yearStart = new Date(Date.UTC(latestDate.getUTCFullYear(), 0, 1));
+  const oneYearStart = new Date(Date.UTC(latestDate.getUTCFullYear() - 1, latestDate.getUTCMonth(), latestDate.getUTCDate()));
+  const threeYearStart = new Date(Date.UTC(latestDate.getUTCFullYear() - 3, latestDate.getUTCMonth(), latestDate.getUTCDate()));
+  const ytdBase = atOrBefore(new Date(yearStart.getTime() - 1000));
+  const oneYearBase = atOrBefore(oneYearStart);
+  const threeYearBase = atOrBefore(threeYearStart);
+  const pct = base => base ? Math.round((latest.value / base.value - 1) * 10000) / 100 : null;
+  const threeYear = pct(threeYearBase);
+  const threeYearAnnualized = threeYearBase ? Math.round((Math.pow(latest.value / threeYearBase.value, 1 / 3) - 1) * 10000) / 100 : null;
+  return {
+    symbol,
+    latestDate: Utilities.formatDate(latestDate, 'Asia/Taipei', 'yyyy-MM-dd'),
+    ytd: pct(ytdBase),
+    oneYear: pct(oneYearBase),
+    threeYear,
+    threeYearAnnualized,
+    historyStart: Utilities.formatDate(new Date(points[0].timestamp * 1000), 'Asia/Taipei', 'yyyy-MM-dd')
+  };
 }
 
 function doPost(event) {
