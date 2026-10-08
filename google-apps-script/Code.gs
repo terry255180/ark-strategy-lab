@@ -71,7 +71,7 @@ function getSecurityReturns_(event) {
   const symbols = [...new Set(raw.toUpperCase().split(',').map(value => value.replace(/[^0-9A-Z]/g, '')).filter(value => /^\d{4,6}[A-Z]?$/.test(value)))].slice(0, 40);
   if (!symbols.length) return { ok: true, source: 'Yahoo Finance adjusted close', items: [] };
   const cache = CacheService.getScriptCache();
-  const cacheVersion = 'v2';
+  const cacheVersion = 'v3';
   const items = [], missing = [];
   symbols.forEach(symbol => {
     const cached = cache.get(`return_${cacheVersion}_${symbol}`);
@@ -113,11 +113,29 @@ function calculateReturnsFromYahoo_(symbol, body) {
   const timestamps = result.timestamp || [];
   const adj = result.indicators && result.indicators.adjclose && result.indicators.adjclose[0] && result.indicators.adjclose[0].adjclose || [];
   const closes = result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close || [];
-  const splitEvents = Object.keys(result.events && result.events.splits || {}).map(key => {
+  const declaredSplitEvents = Object.keys(result.events && result.events.splits || {}).map(key => {
     const event = result.events.splits[key] || {};
     const numerator = Number(event.numerator), denominator = Number(event.denominator);
     return { timestamp: Number(event.date || key), ratio: denominator > 0 ? numerator / denominator : NaN };
   }).filter(event => isFinite(event.timestamp) && isFinite(event.ratio) && event.ratio > 0);
+  const inferredSplitEvents = [];
+  for (let index = 1; index < timestamps.length; index++) {
+    const previous = Number(closes[index - 1]), current = Number(closes[index]);
+    const elapsed = Number(timestamps[index]) - Number(timestamps[index - 1]);
+    if (!(previous > 0) || !(current > 0) || !(elapsed > 0) || elapsed > 14 * 86400) continue;
+    const forwardRatio = previous / current, reverseRatio = current / previous;
+    if (forwardRatio >= 1.8) {
+      const rounded = Math.round(forwardRatio);
+      if (rounded >= 2 && Math.abs(forwardRatio - rounded) / rounded <= 0.18) inferredSplitEvents.push({ timestamp: Number(timestamps[index]), ratio: rounded, inferred: true });
+    } else if (reverseRatio >= 1.8) {
+      const rounded = Math.round(reverseRatio);
+      if (rounded >= 2 && Math.abs(reverseRatio - rounded) / rounded <= 0.18) inferredSplitEvents.push({ timestamp: Number(timestamps[index]), ratio: 1 / rounded, inferred: true });
+    }
+  }
+  const splitEvents = inferredSplitEvents.slice();
+  declaredSplitEvents.forEach(event => {
+    if (!splitEvents.some(inferred => Math.abs(inferred.timestamp - event.timestamp) <= 7 * 86400)) splitEvents.push(event);
+  });
   const dividendEvents = Object.keys(result.events && result.events.dividends || {}).map(key => {
     const event = result.events.dividends[key] || {};
     return { timestamp: Number(event.date || key), amount: Number(event.amount) };
@@ -157,7 +175,8 @@ function calculateReturnsFromYahoo_(symbol, body) {
     threeYearAnnualized,
     historyStart: Utilities.formatDate(new Date(points[0].timestamp * 1000), 'Asia/Taipei', 'yyyy-MM-dd'),
     adjustmentMethod: hasRelevantSplit ? 'split_adjusted_close_plus_dividends' : 'yahoo_adjusted_close',
-    splitsApplied: splitEvents.length
+    splitsApplied: splitEvents.length,
+    inferredSplits: inferredSplitEvents.length
   };
 }
 

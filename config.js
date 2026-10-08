@@ -167,7 +167,7 @@ window.CONFIG = Object.freeze({
     storageKeys: {
       state: "arkStrategyLab.rebalance.state.v1",
       history: "arkStrategyLab.rebalance.history.v1",
-      performance: "arkStrategyLab.rebalance.performance.v5",
+      performance: "arkStrategyLab.rebalance.performance.v6",
     },
   },
   deadBand: 1,
