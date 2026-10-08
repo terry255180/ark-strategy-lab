@@ -2509,7 +2509,6 @@ function renderStrategyValidation() {
     $("backtestConclusion").textContent = "尚無法形成驗證結論。";
     $("backtestChart").innerHTML = "";
     $("backtestTable").innerHTML = "";
-    renderSensitivityValidation(records);
     return;
   }
   $("backtestCount").textContent =
@@ -2556,7 +2555,6 @@ function renderStrategyValidation() {
     `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="三種配置策略淨值曲線">${gridValues.map((value) => `<line class="grid" x1="${left}" x2="${width - right}" y1="${y(value)}" y2="${y(value)}"/><text x="2" y="${y(value) + 3}">${value.toFixed(1)}</text>`).join("")}${result.strategies.map((strategy) => `<polyline class="line ${strategy.key}" points="${strategy.values.map((value, index) => `${x(index)},${y(value)}`).join(" ")}"/>`).join("")}<text x="${left}" y="${height - 5}">${result.dates[0].slice(5).replace("-", "/")}</text><text x="${width - right}" y="${height - 5}" text-anchor="end">${result.dates.at(-1).slice(5).replace("-", "/")}</text></svg>`;
   $("backtestTable").innerHTML =
     `<div class="backtest-row header"><span>策略</span><span>累積報酬</span><span>最大回撤</span><span>年化波動</span><span>累計換手</span><span>平均持股</span></div>${result.strategies.map((strategy) => `<div class="backtest-row"><strong>${strategy.name}</strong><span>${signed(strategy.metrics.cumulativeReturn)}</span><span>${signed(strategy.metrics.maxDrawdown)}</span><span>${strategy.metrics.annualVolatility.toFixed(2)}%</span><span>${strategy.metrics.turnover.toFixed(1)}%點</span><span>${strategy.metrics.averageAllocation.toFixed(1)}%</span></div>`).join("")}`;
-  renderSensitivityValidation(records);
 }
 function quantile(values, p) {
   const sorted = values
@@ -3777,73 +3775,6 @@ function runSelfTests() {
       )
     );
   });
-  test("交易成本會降低淨報酬並列出成本", () => {
-    const rows = [
-        { date: "2026-01-01", taiwanIndex: 100, arkAllocation: 50 },
-        { date: "2026-01-02", taiwanIndex: 102, arkAllocation: 80 },
-        { date: "2026-01-03", taiwanIndex: 101, arkAllocation: 40 },
-      ],
-      noCost = simulateBandStrategy(
-        rows,
-        { deadBand: 0, buyRate: 1, sellRate: 1 },
-        0,
-      ),
-      withCost = simulateBandStrategy(
-        rows,
-        { deadBand: 0, buyRate: 1, sellRate: 1 },
-        0.2,
-      );
-    return (
-      withCost.metrics.transactionCost > 0 &&
-      withCost.metrics.cumulativeReturn < noCost.metrics.cumulativeReturn
-    );
-  });
-  test("70／30驗證只以後30%決定是否採用", () => {
-    const rows = Array.from({ length: 30 }, (_, index) => ({
-        date: `2026-01-${String(index + 1).padStart(2, "0")}`,
-        taiwanIndex: 100 + index,
-        arkAllocation: 65 + (index % 5),
-      })),
-      result = optimizeWalkForward(rows, 0.2);
-    return (
-      result.split === 21 &&
-      result.trainingRows.length === 21 &&
-      result.testingRows.length === 10 &&
-      result.approved ===
-        isOutOfSampleImprovement(
-          result.selectedTesting.metrics,
-          result.testingBenchmark.metrics,
-        )
-    );
-  });
-  test("樣本外淨報酬與回撤必須同時改善", () =>
-    isOutOfSampleImprovement(
-      { cumulativeReturn: 11, maxDrawdown: -8 },
-      { cumulativeReturn: 10, maxDrawdown: -10 },
-    ) &&
-    !isOutOfSampleImprovement(
-      { cumulativeReturn: 11, maxDrawdown: -12 },
-      { cumulativeReturn: 10, maxDrawdown: -10 },
-    ));
-  test("執行診斷包含參與率、保護率與來回交易", () => {
-    const result = simulateBandStrategy(
-      [
-        { date: "2026-01-01", taiwanIndex: 100, arkAllocation: 50 },
-        { date: "2026-01-02", taiwanIndex: 105, arkAllocation: 80 },
-        { date: "2026-01-03", taiwanIndex: 100, arkAllocation: 40 },
-        { date: "2026-01-04", taiwanIndex: 106, arkAllocation: 75 },
-      ],
-      { deadBand: 0, buyRate: 1, sellRate: 1 },
-      0.2,
-    );
-    return (
-      Number.isFinite(result.metrics.upsideCapture) &&
-      Number.isFinite(result.metrics.downsideProtection) &&
-      result.metrics.whipsawTrades >= 2 &&
-      result.metrics.chasePullbackLoss > 0 &&
-      result.metrics.prematureSaleCost > 0
-    );
-  });
   const v2 = window.BuyEngineV2.runBuyEngineSelfTests();
   v2.tests.forEach((x) => tests.push([`BUY V2 · ${x.name}`, x.ok]));
   const passed = tests.filter((t) => t[1]).length,
@@ -3876,9 +3807,6 @@ function bind() {
   document
     .querySelectorAll(".inputs-card input,.inputs-card select")
     .forEach((el) => el.addEventListener("input", renderDashboard));
-  $("backtestCostRate")?.addEventListener("input", () =>
-    renderStrategyValidation(),
-  );
   $("etfCards").addEventListener("change", (event) => {
     const el = event.target,
       index = Number(el.dataset.etfIndex),
