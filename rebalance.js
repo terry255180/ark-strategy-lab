@@ -174,11 +174,19 @@ function renderSellPlan(plan){
   return `<div class="rebalance-plan"><h3>建議調節方案 · PRIMARY PLAN</h3>${rows}<div class="rebalance-totals"><span>實際調節 ${money(p.actualReduction)}</span><span>目標 ${money(plan.target)}</span><span>差額 ${money(p.difference)}</span><span>接近度 ${p.accuracy.toFixed(1)}%</span></div>${alternatives}</div>`;
 }
 const returnPct=value=>value==null||!Number.isFinite(Number(value))?"—":`${Number(value)>=0?"+":""}${Number(value).toFixed(1)}%`;
+function rankHoldingsByReturn(holdings,key){
+  return (holdings||[]).filter(h=>optional(h.periodReturns?.[key])!=null).sort((a,b)=>Number(b.periodReturns[key])-Number(a.periodReturns[key])||String(a.symbol).localeCompare(String(b.symbol))).map((h,index)=>({...h,returnRank:index+1,returnValue:Number(h.periodReturns[key])}));
+}
+function renderReturnRanking(holdings,key,title){
+  const ranked=rankHoldingsByReturn(holdings,key),rows=ranked.map(h=>`<div class="return-rank-row"><strong>${h.returnRank}</strong><span><b>${safe(h.symbol)}</b><small>${safe(h.name)}</small></span><em class="${h.returnValue>=0?"positive":"negative"}">${returnPct(h.returnValue)}</em></div>`).join("");
+  return `<section class="return-rank-card"><h4>${safe(title)}</h4>${rows||`<p class="note">尚無可排名資料</p>`}</section>`;
+}
 function renderPerformanceComparison(plan){
   const rows=plan.scored.map(h=>{const r=h.periodReturns||{};return `<tr><td><strong>${safe(h.symbol)}</strong><small>${safe(h.name)}</small></td><td>${returnPct(h.profitPercent)}</td><td>${returnPct(r.ytd)}</td><td>${returnPct(r.oneYear)}</td><td>${returnPct(r.threeYear)}</td><td>${returnPct(r.threeYearAnnualized)}</td><td>${h.performance?.percentile==null?"—":`${Math.round(h.performance.percentile*100)}%`}</td></tr>`;}).join("");
   const loaded=plan.scored.some(h=>h.periodReturns&&!h.periodReturns.error);
-  const status=performanceLoading?"正在取得期間報酬…":loaded?"以含息調整價估算；同類排名只小幅影響調節順位。":"期間報酬尚未取得；目前方案仍可依其他風控條件計算。";
-  return `<div class="rebalance-plan rebalance-performance"><h3>庫存報酬比較</h3><div class="rebalance-table-wrap"><table><thead><tr><th>標的</th><th>持有報酬</th><th>今年至今</th><th>1 年</th><th>3 年累積</th><th>3 年年化</th><th>同類排名</th></tr></thead><tbody>${rows}</tbody></table></div><p class="note">${status}</p></div>`;
+  const status=performanceLoading?"正在取得期間報酬…":loaded?"以含息調整價估算；三個期間各自獨立排名，同類綜合排名只小幅影響調節順位。":"期間報酬尚未取得；目前方案仍可依其他風控條件計算。";
+  const rankings=`<div class="return-rank-grid">${renderReturnRanking(plan.scored,"ytd","今年至今排名")}${renderReturnRanking(plan.scored,"oneYear","1 年排名")}${renderReturnRanking(plan.scored,"threeYear","3 年累積排名")}</div>`;
+  return `<div class="rebalance-plan rebalance-performance"><h3>庫存報酬比較與排行</h3>${rankings}<div class="rebalance-table-wrap"><table><thead><tr><th>標的</th><th>持有報酬</th><th>今年至今</th><th>1 年</th><th>3 年累積</th><th>3 年年化</th><th>同類綜合排名</th></tr></thead><tbody>${rows}</tbody></table></div><p class="note">${status}</p></div>`;
 }
 function renderSellExplanation(plan){const top=plan.primary.soldHoldings[0];const markets=plan.allocations;return `<div class="rebalance-mini"><strong>為何如此調節</strong><p>ARK 賣出引擎狀態：${safe(regimeZh(plan.decision.regime))}。台股分配約 ${(markets.TW.share*100).toFixed(0)}%、美股／全球約 ${(markets["US / GLOBAL"].share*100).toFixed(0)}%；這是依市場與持股風險動態估算，非固定比例。${top?`優先處理 ${safe(top.symbol)}：${top.sellReasons.slice(0,4).map(safe).join("、")}。`:"請提供有效持股資料以產生實際賣單。"}市場冷熱只調整順序，不單獨決定買賣。</p></div>`;}
 function renderRebalanceCalculator(){
@@ -219,9 +227,9 @@ function applyPerformance(items){const map=new Map((items||[]).map(item=>[String
 async function refreshPerformance(force=false){
   const symbols=[...new Set(state.holdings.map(h=>String(h.symbol||"").toUpperCase()).filter(Boolean))];if(!symbols.length||!C.performance?.enabled)return;
   const cached=loadPerformanceCache(),maxAge=(C.performance.cacheHours||12)*3600000;
-  const cachedSymbols=new Set((cached?.items||[]).map(item=>String(item.symbol||"").toUpperCase()));
+  const cachedSymbols=new Set((cached?.items||[]).filter(item=>!item.error&&[item.ytd,item.oneYear,item.threeYear].some(value=>optional(value)!=null)).map(item=>String(item.symbol||"").toUpperCase()));
   if(!force&&cached?.savedAt&&Date.now()-cached.savedAt<maxAge&&symbols.every(symbol=>cachedSymbols.has(symbol))){applyPerformance(cached.items);return;}
-  const endpoint=CONFIG.googleSheets?.webAppUrl;if(!endpoint)return;
+  const endpoint=CONFIG.imageImport?.visionEndpoint||CONFIG.googleSheets?.webAppUrl;if(!endpoint)return;
   performanceLoading=true;if(lastPlan)renderRebalanceCalculator();
   try{const url=new URL(endpoint);url.searchParams.set("action","returns");url.searchParams.set("symbols",symbols.join(","));const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();if(!data.ok||!Array.isArray(data.items))throw new Error(data.error||"期間報酬格式錯誤");applyPerformance(data.items);localStorage.setItem(C.storageKeys.performance,JSON.stringify({savedAt:Date.now(),items:data.items,source:data.source,asOf:data.asOf}));}
   catch(error){console.warn("ETF performance unavailable",error);}
@@ -243,6 +251,8 @@ function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push(
   test("虧損不自動保護",()=>calculateSellPriority({...raw[0],profitPercent:-20},context).sellPriorityScore>0);
   const performanceScores=calculatePerformanceScores([{symbol:"LOW",exposureGroup:"TEST",periodReturns:{ytd:-5,oneYear:0,threeYearAnnualized:2}},{symbol:"HIGH",exposureGroup:"TEST",periodReturns:{ytd:15,oneYear:20,threeYearAnnualized:18}}]);
   test("同類多期弱勢只小幅提高調節順位",()=>performanceScores.get("LOW").points===C.performance.weakMaxPoints&&performanceScores.get("HIGH").points===-C.performance.strongMaxDiscount);
+  const ranked=[{symbol:"A",periodReturns:{ytd:20,oneYear:5,threeYear:30}},{symbol:"B",periodReturns:{ytd:10,oneYear:25,threeYear:40}}];
+  test("今年、1年、3年報酬各自獨立排名",()=>rankHoldingsByReturn(ranked,"ytd")[0].symbol==="A"&&rankHoldingsByReturn(ranked,"oneYear")[0].symbol==="B"&&rankHoldingsByReturn(ranked,"threeYear")[0].symbol==="B");
   const opt=optimizeSellShares(40000,scored,{oddLot:true,allowFullExit:false,regime:"RISK_OFF"});
   test("股數不超過庫存",()=>opt.soldHoldings.every(x=>x.sellShares<=x.shares));
   test("零股方案接近 40000",()=>Math.abs(opt.actualReduction-40000)<500);
@@ -259,7 +269,7 @@ function init(){loadState();const cached=loadPerformanceCache();if(cached?.items
   $("rebalanceSave").addEventListener("click",()=>{if(!lastPlan){$("rebalanceNotice").textContent="請先計算調節方案。";return;}saveRebalanceSnapshot(lastPlan);$("rebalanceNotice").textContent="已將本次方案與策略版本儲存於此裝置。";});
   // Existing engine is left untouched; observe completed renders.
   const observer=new MutationObserver(()=>renderRebalanceCalculator());observer.observe($("targetExecution"),{childList:true});
-  window.RebalanceCalculator={calculateTargetReduction,calculateUSMarketRegime,calculateTaiwanMarketRegime,calculateMarketSellFactor,calculateArkPersistence,calculateSingleConcentration,calculateExposureGroupConcentration,calculateProfitBuffer,calculatePerformanceScores,calculateSellPriority,generateSellReasons,allocateReductionAcrossMarkets,optimizeSellShares,generateAlternativePlans,saveRebalanceSnapshot,renderRebalanceCalculator,renderMarketRegime,renderSellPlan,renderSellExplanation,renderPerformanceComparison,runRebalanceSelfTests,buildPlan,importHoldingRows,refreshPerformance};
+  window.RebalanceCalculator={calculateTargetReduction,calculateUSMarketRegime,calculateTaiwanMarketRegime,calculateMarketSellFactor,calculateArkPersistence,calculateSingleConcentration,calculateExposureGroupConcentration,calculateProfitBuffer,calculatePerformanceScores,rankHoldingsByReturn,calculateSellPriority,generateSellReasons,allocateReductionAcrossMarkets,optimizeSellShares,generateAlternativePlans,saveRebalanceSnapshot,renderRebalanceCalculator,renderMarketRegime,renderSellPlan,renderSellExplanation,renderPerformanceComparison,runRebalanceSelfTests,buildPlan,importHoldingRows,refreshPerformance};
   const tests=runRebalanceSelfTests(),list=$("selfTestList");if(list){list.insertAdjacentHTML("beforeend",tests.tests.map(x=>`<li>${x.ok?"通過":"失敗"} · 調節：${safe(x.name)}</li>`).join(""));const counts=$("selfTestBadge").textContent.match(/(\d+)\s*\/\s*(\d+)/),old=Number(counts?.[1]||0),total=Number(counts?.[2]||0);$("selfTestBadge").textContent=`${old+tests.passed} / ${total+tests.total} 通過`;$("selfTestBadge").className=`badge ${old+tests.passed===total+tests.total?"buy":"sell"}`;}
 }
 document.addEventListener("DOMContentLoaded",init);
