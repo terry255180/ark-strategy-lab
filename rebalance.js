@@ -174,15 +174,17 @@ function renderSellPlan(plan){
   return `<div class="rebalance-plan"><h3>建議調節方案 · PRIMARY PLAN</h3>${rows}<div class="rebalance-totals"><span>實際調節 ${money(p.actualReduction)}</span><span>目標 ${money(plan.target)}</span><span>差額 ${money(p.difference)}</span><span>接近度 ${p.accuracy.toFixed(1)}%</span></div>${alternatives}</div>`;
 }
 const returnPct=value=>value==null||!Number.isFinite(Number(value))?"—":`${Number(value)>=0?"+":""}${Number(value).toFixed(1)}%`;
+const returnClass=value=>value==null||!Number.isFinite(Number(value))?"":Number(value)>0?"positive":Number(value)<0?"negative":"";
+const returnHtml=value=>`<span class="return-value ${returnClass(value)}">${returnPct(value)}</span>`;
 function rankHoldingsByReturn(holdings,key){
   return (holdings||[]).filter(h=>optional(h.periodReturns?.[key])!=null).sort((a,b)=>Number(b.periodReturns[key])-Number(a.periodReturns[key])||String(a.symbol).localeCompare(String(b.symbol))).map((h,index)=>({...h,returnRank:index+1,returnValue:Number(h.periodReturns[key])}));
 }
 function renderReturnRanking(holdings,key,title){
-  const ranked=rankHoldingsByReturn(holdings,key),rows=ranked.map(h=>`<div class="return-rank-row"><strong>${h.returnRank}</strong><span><b>${safe(h.symbol)}</b><small>${safe(h.name)}</small></span><em class="${h.returnValue>=0?"positive":"negative"}">${returnPct(h.returnValue)}</em></div>`).join("");
+  const ranked=rankHoldingsByReturn(holdings,key),rows=ranked.map(h=>`<div class="return-rank-row"><strong>${h.returnRank}</strong><span><b>${safe(h.symbol)}</b><small>${safe(h.name)}</small></span><em class="${returnClass(h.returnValue)}">${returnPct(h.returnValue)}</em></div>`).join("");
   return `<section class="return-rank-card"><h4>${safe(title)}</h4>${rows||`<p class="note">尚無可排名資料</p>`}</section>`;
 }
 function renderPerformanceComparison(plan){
-  const rows=plan.scored.map(h=>{const r=h.periodReturns||{};return `<tr><td><strong>${safe(h.symbol)}</strong><small>${safe(h.name)}</small></td><td>${returnPct(h.profitPercent)}</td><td>${returnPct(r.ytd)}</td><td>${returnPct(r.oneYear)}</td><td>${returnPct(r.threeYear)}</td><td>${returnPct(r.threeYearAnnualized)}</td><td>${h.performance?.percentile==null?"—":`${Math.round(h.performance.percentile*100)}%`}</td></tr>`;}).join("");
+  const rows=plan.scored.map(h=>{const r=h.periodReturns||{};return `<tr><td><strong>${safe(h.symbol)}</strong><small>${safe(h.name)}</small></td><td>${returnHtml(h.profitPercent)}</td><td>${returnHtml(r.ytd)}</td><td>${returnHtml(r.oneYear)}</td><td>${returnHtml(r.threeYear)}</td><td>${returnHtml(r.threeYearAnnualized)}</td><td>${h.performance?.percentile==null?"—":`${Math.round(h.performance.percentile*100)}%`}</td></tr>`;}).join("");
   const loaded=plan.scored.some(h=>h.periodReturns&&!h.periodReturns.error);
   const status=performanceLoading?"正在取得期間報酬…":loaded?"以含息調整價估算；三個期間各自獨立排名，同類綜合排名只小幅影響調節順位。":"期間報酬尚未取得；目前方案仍可依其他風控條件計算。";
   const rankings=`<div class="return-rank-grid">${renderReturnRanking(plan.scored,"ytd","今年至今排名")}${renderReturnRanking(plan.scored,"oneYear","1 年排名")}${renderReturnRanking(plan.scored,"threeYear","3 年累積排名")}</div>`;

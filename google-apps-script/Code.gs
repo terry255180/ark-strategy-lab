@@ -111,7 +111,24 @@ function calculateReturnsFromYahoo_(symbol, body) {
   if (!result) throw new Error('查無歷史行情');
   const timestamps = result.timestamp || [];
   const adj = result.indicators && result.indicators.adjclose && result.indicators.adjclose[0] && result.indicators.adjclose[0].adjclose || [];
-  const points = timestamps.map((timestamp, index) => ({ timestamp, value: Number(adj[index]) })).filter(point => isFinite(point.value) && point.value > 0);
+  const closes = result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close || [];
+  const splitEvents = Object.keys(result.events && result.events.splits || {}).map(key => {
+    const event = result.events.splits[key] || {};
+    const numerator = Number(event.numerator), denominator = Number(event.denominator);
+    return { timestamp: Number(event.date || key), ratio: denominator > 0 ? numerator / denominator : NaN };
+  }).filter(event => isFinite(event.timestamp) && isFinite(event.ratio) && event.ratio > 0);
+  const dividendEvents = Object.keys(result.events && result.events.dividends || {}).map(key => {
+    const event = result.events.dividends[key] || {};
+    return { timestamp: Number(event.date || key), amount: Number(event.amount) };
+  }).filter(event => isFinite(event.timestamp) && isFinite(event.amount));
+  const lastTimestamp = Number(timestamps[timestamps.length - 1] || 0);
+  const splitFactorAfter = timestamp => splitEvents.filter(event => event.timestamp > timestamp && event.timestamp <= lastTimestamp).reduce((factor, event) => factor * event.ratio, 1);
+  const hasRelevantSplit = splitEvents.some(event => event.timestamp <= lastTimestamp);
+  const points = timestamps.map((timestamp, index) => {
+    const rawClose = Number(closes[index]), yahooAdjusted = Number(adj[index]);
+    const splitAdjusted = rawClose > 0 ? rawClose / splitFactorAfter(Number(timestamp)) : NaN;
+    return { timestamp: Number(timestamp), value: hasRelevantSplit ? splitAdjusted : yahooAdjusted, rawClose };
+  }).filter(point => isFinite(point.timestamp) && isFinite(point.value) && point.value > 0);
   if (points.length < 2) throw new Error('歷史資料不足');
   const latest = points[points.length - 1];
   const latestDate = new Date(latest.timestamp * 1000);
@@ -126,9 +143,10 @@ function calculateReturnsFromYahoo_(symbol, body) {
   const ytdBase = atOrBefore(new Date(yearStart.getTime() - 1000));
   const oneYearBase = atOrBefore(oneYearStart);
   const threeYearBase = atOrBefore(threeYearStart);
-  const pct = base => base ? Math.round((latest.value / base.value - 1) * 10000) / 100 : null;
+  const dividendsAfter = base => base ? dividendEvents.filter(event => event.timestamp > base.timestamp && event.timestamp <= latest.timestamp).reduce((sum, event) => sum + event.amount / splitFactorAfter(event.timestamp), 0) : 0;
+  const pct = base => base ? Math.round(((latest.value + (hasRelevantSplit ? dividendsAfter(base) : 0)) / base.value - 1) * 10000) / 100 : null;
   const threeYear = pct(threeYearBase);
-  const threeYearAnnualized = threeYearBase ? Math.round((Math.pow(latest.value / threeYearBase.value, 1 / 3) - 1) * 10000) / 100 : null;
+  const threeYearAnnualized = threeYear === null ? null : Math.round((Math.pow(1 + threeYear / 100, 1 / 3) - 1) * 10000) / 100;
   return {
     symbol,
     latestDate: Utilities.formatDate(latestDate, 'Asia/Taipei', 'yyyy-MM-dd'),
@@ -136,7 +154,9 @@ function calculateReturnsFromYahoo_(symbol, body) {
     oneYear: pct(oneYearBase),
     threeYear,
     threeYearAnnualized,
-    historyStart: Utilities.formatDate(new Date(points[0].timestamp * 1000), 'Asia/Taipei', 'yyyy-MM-dd')
+    historyStart: Utilities.formatDate(new Date(points[0].timestamp * 1000), 'Asia/Taipei', 'yyyy-MM-dd'),
+    adjustmentMethod: hasRelevantSplit ? 'split_adjusted_close_plus_dividends' : 'yahoo_adjusted_close',
+    splitsApplied: splitEvents.length
   };
 }
 
