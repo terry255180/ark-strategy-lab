@@ -1,5 +1,5 @@
 window.CONFIG = Object.freeze({
-  strategyVersion: "BUY_ENGINE_V2.0",
+  strategyVersion: "V2.1",
   buyEngineV2: Object.freeze({
     status: "HEURISTIC · NOT BACKTEST OPTIMIZED",
     deadband: 1,
