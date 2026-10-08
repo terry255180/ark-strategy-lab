@@ -204,9 +204,12 @@ function applyCentralData(data) {
     taiwanIndex: Number(row.taiwanIndex),
   }));
   const latest = records.at(-1),
+    lookbacks = getArkLookbackValues(
+      records,
+      $("decisionDate")?.value ||
+        new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" }),
+    ),
     allocations = records.map((row) => Number(row.arkAllocation));
-  const previous = (days) =>
-    allocations[Math.max(0, allocations.length - 1 - days)];
   const setNumber = (id, value) => {
     if (
       value !== "" &&
@@ -216,15 +219,38 @@ function applyCentralData(data) {
     )
       $(id).value = Number(value);
   };
-  setNumber("yesterdayArk", previous(1));
-  setNumber("ark3D", previous(3));
-  setNumber("ark5D", previous(5));
+  setNumber("yesterdayArk", lookbacks.yesterday);
+  setNumber("ark3D", lookbacks.threeDaysAgo);
+  setNumber("ark5D", lookbacks.fiveDaysAgo);
   setNumber("peak10D", Math.max(...allocations.slice(-10)));
   setNumber("cnn", latest.cnn);
   setNumber("margin", latest.marginMaintenance);
   setNumber("rsi", latest.rsi);
   renderDashboard();
   return true;
+}
+
+function getArkLookbackValues(records, todayDate) {
+  const valid = (records || [])
+      .filter((row) => row?.date && Number.isFinite(Number(row.arkAllocation)))
+      .map((row) => ({
+        date: String(row.date).slice(0, 10),
+        arkAllocation: Number(row.arkAllocation),
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    latestIndex = valid.length - 1;
+  if (latestIndex < 0)
+    return { yesterday: null, threeDaysAgo: null, fiveDaysAgo: null };
+  const latestIsToday =
+      valid[latestIndex].date === String(todayDate).slice(0, 10),
+    yesterdayIndex = latestIndex - (latestIsToday ? 1 : 0),
+    valueAtTradingOffset = (offset) =>
+      valid[Math.max(0, yesterdayIndex - offset)]?.arkAllocation ?? null;
+  return {
+    yesterday: valueAtTradingOffset(0),
+    threeDaysAgo: valueAtTradingOffset(2),
+    fiveDaysAgo: valueAtTradingOffset(4),
+  };
 }
 
 async function syncCentralData({ silent = false } = {}) {
@@ -3483,6 +3509,41 @@ function runSelfTests() {
       rows[0].taiwanIndex === 120
     );
   });
+  test("試算表最後日期不是今天時最後一筆視為昨日", () => {
+    const values = getArkLookbackValues(
+      [
+        { date: "2026-10-01", arkAllocation: 71 },
+        { date: "2026-10-02", arkAllocation: 72 },
+        { date: "2026-10-03", arkAllocation: 73 },
+        { date: "2026-10-06", arkAllocation: 74 },
+        { date: "2026-10-07", arkAllocation: 75 },
+      ],
+      "2026-10-08",
+    );
+    return (
+      values.yesterday === 75 &&
+      values.threeDaysAgo === 73 &&
+      values.fiveDaysAgo === 71
+    );
+  });
+  test("試算表已有今天資料時會從前一交易日開始回看", () => {
+    const values = getArkLookbackValues(
+      [
+        { date: "2026-10-01", arkAllocation: 71 },
+        { date: "2026-10-02", arkAllocation: 72 },
+        { date: "2026-10-03", arkAllocation: 73 },
+        { date: "2026-10-06", arkAllocation: 74 },
+        { date: "2026-10-07", arkAllocation: 75 },
+        { date: "2026-10-08", arkAllocation: 76 },
+      ],
+      "2026-10-08",
+    );
+    return (
+      values.yesterday === 75 &&
+      values.threeDaysAgo === 73 &&
+      values.fiveDaysAgo === 71
+    );
+  });
   test("當下大盤新高會進入市場位置判斷", () => {
     const date = $("decisionDate").value,
       rows = recordsWithCurrentMarket(
@@ -3887,6 +3948,7 @@ async function init() {
 document.addEventListener("DOMContentLoaded", init);
 
 window.ARKStrategyLab = {
+  getArkLookbackValues,
   calculateGap,
   calculateArkTrend,
   calculateArkPeak,
