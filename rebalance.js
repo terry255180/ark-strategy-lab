@@ -6,7 +6,7 @@ const safe=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"
 const finite=n=>Number.isFinite(Number(n))?Number(n):0;
 const optional=n=>n===""||n==null?null:Number.isFinite(Number(n))?Number(n):null;
 const cap=(n,a,b)=>Math.max(a,Math.min(b,n));
-const defaultHolding=()=>({symbol:"",name:"",marketValue:0,shares:0,currentPrice:0,profitAmount:0,profitPercent:0,assetType:"ETF",marketRegion:"TW",exposureGroup:"OTHER",leveraged:false,inArkToday:false,arkRank:null,daysOutOfArk:0,arkPresence5D:0,valueTag:"",heatingTag:"",periodReturns:null});
+const defaultHolding=()=>({symbol:"",name:"",shares:0,costBasis:0,currentPrice:0,marketValue:0,profitAmount:0,profitPercent:0,assetType:"ETF",marketRegion:"TW",exposureGroup:"OTHER",leveraged:false,inArkToday:false,arkRank:null,daysOutOfArk:0,arkPresence5D:0,valueTag:"",heatingTag:"",periodReturns:null});
 let state={holdings:[],totalAssets:0,targetOverride:null,usRsi:null,usBias:null,usPercentile:null,usReturn:null,oddLot:C.optimizer.defaultOddLot,allowFullExit:C.optimizer.defaultFullExit},lastPlan=null,autoTarget=0,performanceLoading=false;
 const api=window.ARKStrategyLab;
 
@@ -123,7 +123,15 @@ function allocateReductionAcrossMarkets(target,scored){
   const sum=Object.values(buckets).reduce((a,b)=>a+b,0);
   return Object.fromEntries(Object.entries(buckets).map(([k,v])=>[k,{share:sum?v/sum:0,amount:sum?target*v/sum:0}]));
 }
-function normalizedHolding(h){const x={...defaultHolding(),...h};for(const k of ["marketValue","shares","currentPrice","profitAmount","profitPercent","arkRank","daysOutOfArk","arkPresence5D"])x[k]=optional(x[k])??0;x.shares=Math.max(0,Math.floor(x.shares));x.currentPrice=Math.max(0,x.currentPrice);x.marketValue=Math.max(0,x.marketValue||x.shares*x.currentPrice);x.leveraged=Boolean(x.leveraged);x.inArkToday=Boolean(x.inArkToday);return x;}
+function calculateHoldingMetrics(holding,latestPrice){
+  const shares=Math.max(0,Math.floor(finite(holding?.shares))),price=Math.max(0,finite(latestPrice));
+  const legacyCost=Math.max(0,finite(holding?.marketValue)-finite(holding?.profitAmount));
+  const costBasis=Math.max(0,finite(holding?.costBasis)||legacyCost);
+  const marketValue=Math.round(shares*price*100)/100,profitAmount=Math.round((marketValue-costBasis)*100)/100;
+  const profitPercent=costBasis>0?Math.round(profitAmount/costBasis*10000)/100:0;
+  return {shares,costBasis,currentPrice:price,marketValue,profitAmount,profitPercent};
+}
+function normalizedHolding(h){const x={...defaultHolding(),...h};for(const k of ["marketValue","shares","costBasis","currentPrice","profitAmount","profitPercent","arkRank","daysOutOfArk","arkPresence5D"])x[k]=optional(x[k])??0;Object.assign(x,calculateHoldingMetrics(x,x.currentPrice));x.leveraged=Boolean(x.leveraged);x.inArkToday=Boolean(x.inArkToday);return x;}
 function eligibleShares(h,options){
   const shares=Math.max(0,Math.floor(finite(h.shares))),lot=h.marketRegion==="TW"&&!options.oddLot?1000:1;
   let max=Math.floor(shares/lot)*lot;
@@ -209,30 +217,31 @@ function renderResults(plan){
 }
 function renderHoldingEditor(){
   $("rebalanceHoldings").innerHTML=state.holdings.map((h,i)=>`<div class="rebalance-holding"><details ${i===state.holdings.length-1?"open":""}><summary>${safe(h.symbol||"新持股")} ${safe(h.name)} · ${money(h.marketValue||h.shares*h.currentPrice)}</summary><div class="rebalance-fields">
-    ${field(i,"symbol","代號",h.symbol,"text")}${field(i,"name","名稱",h.name,"text")}${field(i,"shares","持有股數",h.shares)}${field(i,"currentPrice","目前價格",h.currentPrice)}${field(i,"marketValue","市值（可留 0 自算）",h.marketValue)}${field(i,"profitAmount","損益金額",h.profitAmount)}${field(i,"profitPercent","損益 %",h.profitPercent)}${yesNoField(i,"valueTag","價值標籤",h.valueTag)}${yesNoField(i,"heatingTag","升溫標籤",h.heatingTag)}
+    ${field(i,"symbol","代號",h.symbol,"text")}${field(i,"name","名稱",h.name,"text")}${field(i,"shares","持有股數",h.shares)}${field(i,"costBasis","持有總成本",h.costBasis)}${calculatedField("目前價格",h.currentPrice)}${calculatedField("目前市值",h.marketValue)}${calculatedField("未實現損益",h.profitAmount)}${calculatedField("持有報酬 %",h.profitPercent)}${yesNoField(i,"valueTag","價值標籤",h.valueTag)}${yesNoField(i,"heatingTag","升溫標籤",h.heatingTag)}
     <label>市場<select data-holding="${i}" data-field="marketRegion">${["TW","US","GLOBAL","OTHER"].map(x=>`<option ${h.marketRegion===x?"selected":""}>${x}</option>`).join("")}</select></label>
     <label>曝險群組<select data-holding="${i}" data-field="exposureGroup">${["TAIWAN_LARGE_CAP","TAIWAN_TECH","TAIWAN_FINANCIAL","US_TECH","US_SEMICONDUCTOR","US_BROAD_MARKET","GLOBAL_TECH","GLOBAL_THEME","OTHER"].map(x=>`<option ${h.exposureGroup===x?"selected":""}>${x}</option>`).join("")}</select></label>
     <label>資產類型<input data-holding="${i}" data-field="assetType" value="${safe(h.assetType)}"></label><label class="check"><input type="checkbox" data-holding="${i}" data-field="leveraged" ${h.leveraged?"checked":""}>槓桿標的</label><label class="check"><input type="checkbox" data-holding="${i}" data-field="inArkToday" ${h.inArkToday?"checked":""}>今日在 ARK</label>
   </div></details><button type="button" class="rebalance-remove" data-remove-holding="${i}" aria-label="移除 ${safe(h.symbol||"此筆持股")}" title="移除此筆">×</button></div>`).join("")||`<p class="note">尚無持股。按「新增持股」輸入資料；既有 ETF 買進資料不包含實際持股股數與成本，因此不會被當成真實持股。</p>`;
 }
 function field(i,k,label,value,type="number"){return `<label>${label}<input data-holding="${i}" data-field="${k}" type="${type}" ${type==="number"?'step="any"':""} value="${safe(value??"")}"></label>`;}
+function calculatedField(label,value){return `<label>${label}<input type="text" value="${safe(Number(value||0).toLocaleString("zh-TW",{maximumFractionDigits:2}))}" readonly></label>`;}
 function yesNoField(i,k,label,value){return `<label>${label}<select data-holding="${i}" data-field="${k}"><option value="" ${value!=="YES"&&value!=="NO"?"selected":""}>未設定</option><option value="YES" ${value==="YES"?"selected":""}>YES</option><option value="NO" ${value==="NO"?"selected":""}>NO</option></select></label>`;}
 function importHoldingRows(rows){
   const merged=new Map(state.holdings.filter(h=>h.symbol).map(h=>[String(h.symbol).toUpperCase(),h]));
-  for(const row of rows){const symbol=String(row.symbol||"").toUpperCase().trim();if(!symbol||!Number.isInteger(Number(row.shares))||Number(row.shares)<=0||!(Number(row.currentPrice)>0))continue;
+  for(const row of rows){const symbol=String(row.symbol||"").toUpperCase().trim();if(!symbol||!Number.isInteger(Number(row.shares))||Number(row.shares)<=0||!(Number(row.costBasis)>0))continue;
     const prior=merged.get(symbol)||defaultHolding();
     const fields=Object.fromEntries(Object.entries(row).filter(([,value])=>value!==null&&value!==undefined&&value!==""));
-    merged.set(symbol,normalizedHolding({...prior,...fields,symbol,marketValue:fields.marketValue??Number(row.shares)*Number(row.currentPrice)}));
+    merged.set(symbol,normalizedHolding({...prior,...fields,symbol}));
   }
-  state.holdings=[...merged.values(),...state.holdings.filter(h=>!h.symbol)].slice(0,C.optimizer.maxHoldings);saveState();renderHoldingEditor();lastPlan=null;$("rebalanceResults").innerHTML="";renderRebalanceCalculator();return state.holdings.length;
+  state.holdings=[...merged.values(),...state.holdings.filter(h=>!h.symbol)].slice(0,C.optimizer.maxHoldings);saveState();renderHoldingEditor();lastPlan=null;$("rebalanceResults").innerHTML="";renderRebalanceCalculator();void refreshPerformance();return state.holdings.length;
 }
 function saveState(){localStorage.setItem(C.storageKeys.state,JSON.stringify(state));}
 function loadPerformanceCache(){try{return JSON.parse(localStorage.getItem(C.storageKeys.performance)||"null");}catch{return null;}}
-function applyPerformance(items){const map=new Map((items||[]).map(item=>[String(item.symbol||"").toUpperCase(),item]));state.holdings=state.holdings.map(h=>({...h,periodReturns:map.get(String(h.symbol).toUpperCase())||h.periodReturns||null}));saveState();}
+function applyPerformance(items){const map=new Map((items||[]).map(item=>[String(item.symbol||"").toUpperCase(),item]));state.holdings=state.holdings.map(h=>{const quote=map.get(String(h.symbol).toUpperCase()),periodReturns=quote||h.periodReturns||null;return {...h,...calculateHoldingMetrics(h,quote?.latestPrice??h.currentPrice),periodReturns};});saveState();renderHoldingEditor();if(lastPlan)renderRebalanceCalculator();}
 async function refreshPerformance(force=false){
   const symbols=[...new Set(state.holdings.map(h=>String(h.symbol||"").toUpperCase()).filter(Boolean))];if(!symbols.length||!C.performance?.enabled)return;
   const cached=loadPerformanceCache(),maxAge=(C.performance.cacheHours||12)*3600000;
-  const cachedSymbols=new Set((cached?.items||[]).filter(item=>!item.error&&[item.ytd,item.oneYear,item.threeYear].some(value=>optional(value)!=null)).map(item=>String(item.symbol||"").toUpperCase()));
+  const cachedSymbols=new Set((cached?.items||[]).filter(item=>!item.error&&Number(item.latestPrice)>0&&[item.ytd,item.oneYear,item.threeYear].some(value=>optional(value)!=null)).map(item=>String(item.symbol||"").toUpperCase()));
   if(!force&&cached?.savedAt&&Date.now()-cached.savedAt<maxAge&&symbols.every(symbol=>cachedSymbols.has(symbol))){applyPerformance(cached.items);return;}
   const endpoint=CONFIG.performanceEndpoint||CONFIG.imageImport?.visionEndpoint||CONFIG.googleSheets?.webAppUrl;if(!endpoint)return;
   performanceLoading=true;if(lastPlan)renderRebalanceCalculator();
@@ -258,6 +267,7 @@ function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push(
   test("庫存多期弱勢提高、強勢降低調節順位",()=>performanceScores.get("LOW").points===C.performance.weakMaxPoints&&performanceScores.get("LOW").rank===2&&performanceScores.get("HIGH").points===-C.performance.strongMaxDiscount&&performanceScores.get("HIGH").rank===1);
   const ranked=[{symbol:"A",periodReturns:{ytd:20,oneYear:5,threeYear:30}},{symbol:"B",periodReturns:{ytd:10,oneYear:25,threeYear:40}}];
   test("今年、1年、3年報酬各自獨立排名",()=>rankHoldingsByReturn(ranked,"ytd")[0].symbol==="A"&&rankHoldingsByReturn(ranked,"oneYear")[0].symbol==="B"&&rankHoldingsByReturn(ranked,"threeYear")[0].symbol==="B");
+  test("價格、股數與成本可計算市值損益報酬",()=>{const x=calculateHoldingMetrics({shares:100,costBasis:15000},200);return x.marketValue===20000&&x.profitAmount===5000&&x.profitPercent===33.33;});
   const opt=optimizeSellShares(40000,scored,{oddLot:true,allowFullExit:false,regime:"RISK_OFF"});
   test("股數不超過庫存",()=>opt.soldHoldings.every(x=>x.sellShares<=x.shares));
   test("零股方案接近 40000",()=>Math.abs(opt.actualReduction-40000)<500);
@@ -268,13 +278,13 @@ function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push(
 function init(){loadState();const cached=loadPerformanceCache();if(cached?.items)applyPerformance(cached.items);renderHoldingEditor();renderRebalanceCalculator();
   for(const id of ["rebalanceTotalAssets","rebalanceTarget","rebalanceUsRsi","rebalanceUsBias","rebalanceUsPercentile","rebalanceUsReturn","rebalanceOddLot","rebalanceFullExit"])$(id).addEventListener("change",()=>{readInputs();renderRebalanceCalculator();});
   $("rebalanceAddHolding").addEventListener("click",()=>{if(state.holdings.length>=C.optimizer.maxHoldings)return;state.holdings.push(defaultHolding());saveState();renderHoldingEditor();});
-  $("rebalanceHoldings").addEventListener("change",e=>{const i=Number(e.target.dataset.holding),key=e.target.dataset.field;if(!key||!state.holdings[i])return;state.holdings[i][key]=e.target.type==="checkbox"?e.target.checked:e.target.type==="number"?finite(e.target.value):e.target.value;saveState();renderRebalanceCalculator();});
+  $("rebalanceHoldings").addEventListener("change",e=>{const i=Number(e.target.dataset.holding),key=e.target.dataset.field;if(!key||!state.holdings[i])return;state.holdings[i][key]=e.target.type==="checkbox"?e.target.checked:e.target.type==="number"?finite(e.target.value):e.target.value;if(key==="shares"||key==="costBasis")Object.assign(state.holdings[i],calculateHoldingMetrics(state.holdings[i],state.holdings[i].currentPrice));saveState();if(key==="shares"||key==="costBasis")renderHoldingEditor();renderRebalanceCalculator();});
   $("rebalanceHoldings").addEventListener("click",e=>{const b=e.target.closest("[data-remove-holding]");if(!b)return;state.holdings.splice(Number(b.dataset.removeHolding),1);saveState();renderHoldingEditor();renderRebalanceCalculator();});
   $("rebalanceCalculate").addEventListener("click",async()=>{readInputs();const input=api.getInput(),decision=window.currentDecision;lastPlan=buildPlan(decision,input,state.holdings,state,window.centralRecords||[]);renderResults(lastPlan);await refreshPerformance();});
   $("rebalanceSave").addEventListener("click",()=>{if(!lastPlan){$("rebalanceNotice").textContent="請先計算調節方案。";return;}saveRebalanceSnapshot(lastPlan);$("rebalanceNotice").textContent="已將本次方案與策略版本儲存於此裝置。";});
   // Existing engine is left untouched; observe completed renders.
   const observer=new MutationObserver(()=>renderRebalanceCalculator());observer.observe($("targetExecution"),{childList:true});
-  window.RebalanceCalculator={calculateTargetReduction,calculateUSMarketRegime,calculateTaiwanMarketRegime,calculateMarketSellFactor,calculateArkPersistence,calculateSingleConcentration,calculateExposureGroupConcentration,calculateProfitBuffer,calculatePerformanceScores,rankHoldingsByReturn,calculateSellPriority,generateSellReasons,allocateReductionAcrossMarkets,optimizeSellShares,generateAlternativePlans,saveRebalanceSnapshot,renderRebalanceCalculator,renderMarketRegime,renderSellPlan,renderSellExplanation,renderPerformanceComparison,runRebalanceSelfTests,buildPlan,importHoldingRows,refreshPerformance};
+  window.RebalanceCalculator={calculateTargetReduction,calculateUSMarketRegime,calculateTaiwanMarketRegime,calculateMarketSellFactor,calculateArkPersistence,calculateSingleConcentration,calculateExposureGroupConcentration,calculateProfitBuffer,calculateHoldingMetrics,calculatePerformanceScores,rankHoldingsByReturn,calculateSellPriority,generateSellReasons,allocateReductionAcrossMarkets,optimizeSellShares,generateAlternativePlans,saveRebalanceSnapshot,renderRebalanceCalculator,renderMarketRegime,renderSellPlan,renderSellExplanation,renderPerformanceComparison,runRebalanceSelfTests,buildPlan,importHoldingRows,refreshPerformance};
   const tests=runRebalanceSelfTests(),list=$("selfTestList");if(list){list.insertAdjacentHTML("beforeend",tests.tests.map(x=>`<li>${x.ok?"通過":"失敗"} · 調節：${safe(x.name)}</li>`).join(""));const counts=$("selfTestBadge").textContent.match(/(\d+)\s*\/\s*(\d+)/),old=Number(counts?.[1]||0),total=Number(counts?.[2]||0);$("selfTestBadge").textContent=`${old+tests.passed} / ${total+tests.total} 通過`;$("selfTestBadge").className=`badge ${old+tests.passed===total+tests.total?"buy":"sell"}`;}
 }
 document.addEventListener("DOMContentLoaded",init);

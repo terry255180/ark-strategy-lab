@@ -71,7 +71,7 @@ function getSecurityReturns_(event) {
   const symbols = [...new Set(raw.toUpperCase().split(',').map(value => value.replace(/[^0-9A-Z]/g, '')).filter(value => /^\d{4,6}[A-Z]?$/.test(value)))].slice(0, 40);
   if (!symbols.length) return { ok: true, source: 'Yahoo Finance adjusted close', items: [] };
   const cache = CacheService.getScriptCache();
-  const cacheVersion = 'v3';
+  const cacheVersion = 'v4';
   const items = [], missing = [];
   symbols.forEach(symbol => {
     const cached = cache.get(`return_${cacheVersion}_${symbol}`);
@@ -169,6 +169,7 @@ function calculateReturnsFromYahoo_(symbol, body) {
   return {
     symbol,
     latestDate: Utilities.formatDate(latestDate, 'Asia/Taipei', 'yyyy-MM-dd'),
+    latestPrice: Math.round((latest.rawClose > 0 ? latest.rawClose : latest.value) * 100) / 100,
     ytd: pct(ytdBase),
     oneYear: pct(oneYearBase),
     threeYear,
@@ -302,11 +303,7 @@ function analyzeHoldingImages_(request) {
             symbol: { type: 'string', description: '股票或 ETF 代號' },
             name: { type: 'string', description: '股票或 ETF 名稱' },
             shares: { type: 'integer', description: '持有股數或庫存量' },
-            currentPrice: { type: 'number', description: '目前價格或成交價' },
-            marketValue: { type: 'number', description: '目前市值；若畫面只有成本與損益則以兩者相加' },
-            profitAmount: { type: 'number', description: '未實現損益金額，保留正負號' },
-            profitPercent: { type: 'number', description: '未實現損益百分比，保留正負號' },
-            marketRegion: { type: 'string', description: 'TW、US、GLOBAL 或 OTHER' }
+            costBasis: { type: 'number', description: '整筆持股的持有總成本，不是每股成本' }
           },
           required: ['symbol', 'name']
         }
@@ -349,11 +346,10 @@ function analyzeHoldingImages_(request) {
 function buildHoldingVisionPrompt_() {
   return [
     '你正在辨識券商 App 的持股庫存或庫存損益截圖。多張圖片可能有重疊列，最後只保留每個股票或 ETF 一筆。',
-    '逐列讀取股票代號、名稱、持有股數、目前價格、目前市值、未實現損益金額與未實現損益百分比，所有正負號都必須保留。',
+    '逐列只讀取股票代號、名稱、持有股數、持有總成本。持有總成本是整筆部位的成本，不是每股成本。',
     '台股代號通常是 4 至 6 位數字，可能帶尾端英文字母；美股代號通常是 1 至 5 位英文字母。不要把欄位標題、幣別、日期或總計當成代號。',
-    '若畫面顯示總成本而非目前市值，可用總成本加未實現損益金額得到目前市值；只有在股數與市值都可靠時才推算目前價格。',
-    '不要將總成本誤填成市值，不要將報酬率誤填成價格。看不清楚的欄位保留空值，不可補零或虛構資料。',
-    'marketRegion 使用 TW、US、GLOBAL 或 OTHER。逐列掃描圖片中所有持股，僅回傳符合指定 JSON schema 的結果。'
+    '不要辨識或回傳目前價格、市值、損益金額、報酬率；這些欄位將由系統使用即時價格計算。',
+    '不要將目前市值誤填成持有總成本。看不清楚的欄位保留空值，不可補零或虛構資料。逐列掃描圖片中所有持股，僅回傳符合指定 JSON schema 的結果。'
   ].join('\n');
 }
 
@@ -367,16 +363,8 @@ function normalizeGeminiHoldingItems_(rawItems) {
       symbol,
       name: String(raw.name || '').trim() || symbol,
       shares: sharesValue && sharesValue > 0 ? sharesValue : null,
-      currentPrice: numberOrNull_(raw.currentPrice),
-      marketValue: numberOrNull_(raw.marketValue),
-      profitAmount: numberOrNull_(raw.profitAmount),
-      profitPercent: numberOrNull_(raw.profitPercent),
-      marketRegion: /^(TW|US|GLOBAL|OTHER)$/.test(String(raw.marketRegion || '').toUpperCase())
-        ? String(raw.marketRegion).toUpperCase()
-        : /^\d/.test(symbol) ? 'TW' : 'US'
+      costBasis: numberOrNull_(raw.costBasis)
     };
-    if (!(item.currentPrice > 0) && item.shares > 0 && item.marketValue > 0) item.currentPrice = Math.round(item.marketValue / item.shares * 100) / 100;
-    if (!(item.marketValue > 0) && item.shares > 0 && item.currentPrice > 0) item.marketValue = Math.round(item.shares * item.currentPrice * 100) / 100;
     const old = map[symbol];
     if (!old) map[symbol] = item;
     else Object.keys(item).forEach(key => { if ((old[key] === null || old[key] === '') && item[key] !== null && item[key] !== '') old[key] = item[key]; });

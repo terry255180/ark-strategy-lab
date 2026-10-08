@@ -6,10 +6,10 @@ const number=s=>{const source=String(s??"").trim();const raw=source.replace(/[�
 const profitNumber=s=>number(String(s??"").replace(/^[=＝](?=\s*\d)/,"-"));
 const twSymbol=s=>{const x=String(s??"").trim().toUpperCase().replace(/[Ｏ０O]/g,"0").replace(/[ＩｌI|]/g,"1");return /^\d{4,6}[A-Z]?$/.test(x)?x:null;};
 const ticker=s=>{const tw=twSymbol(s);if(tw)return tw;const x=String(s??"").trim().toUpperCase();return /^[A-Z]{1,5}$/.test(x)&&!/^(?:TW|US|ETF|NAV|USD|TWD|TOTAL|QTY|PRICE|VALUE|SHARE|SHARES|PCT|COST|PROFIT|LOSS|RSI|PNL|ARK)$/.test(x)?x:null;};
-const aliases={shares:/股數|庫存量|持有量|持有股數|數量|QTY|SHARES|QUANTITY/i,currentPrice:/現價|成交價|目前價格|市價|股價|PRICE|LAST/i,marketValue:/市值|現值|目前市值|庫存市值|MARKET\s*VALUE|VALUE/i,profitAmount:/損益金額|累計損益|未實現損益|總損益|損益|P\/L|PROFIT/i,profitPercent:/報酬率|損益率|獲利率|收益率|RETURN\s*%|P\/L\s*%/i};
+const aliases={shares:/股數|庫存量|持有量|持有股數|數量|QTY|SHARES|QUANTITY/i,costBasis:/持有成本|總成本|成本|COST\s*BASIS|TOTAL\s*COST/i,currentPrice:/現價|成交價|目前價格|市價|股價|PRICE|LAST/i,marketValue:/市值|現值|目前市值|庫存市值|MARKET\s*VALUE|VALUE/i,profitAmount:/損益金額|累計損益|未實現損益|總損益|損益|P\/L|PROFIT/i,profitPercent:/報酬率|損益率|獲利率|收益率|RETURN\s*%|P\/L\s*%/i};
 const sampleNames={"2383":"台光電","006208":"富邦台50","00631L":"元大台灣50正2","0050":"元大台灣50","00911":"兆豐洲際半導體","00876":"元大全球5G","00861":"元大全球未來通訊","0053":"元大電子","0052":"富邦科技","0056":"元大高股息","2454":"聯發科","00830":"國泰費城半導體","0055":"元大MSCI金融","0057":"富邦摩台","006203":"元大MSCI台灣","6757":"台灣虎航","1432":"大魯閣","00988A":"主動統一全球創新"};
 let files=[],urls=[],rows=[],busy=false;
-const empty=s=>({symbol:s,name:"",shares:null,currentPrice:null,marketValue:null,profitAmount:null,profitPercent:null,marketRegion:/^[A-Z]{1,5}$/.test(s)?"US":"OTHER",exposureGroup:"OTHER",warnings:[]});
+const empty=s=>({symbol:s,name:"",shares:null,costBasis:null,currentPrice:null,marketValue:null,profitAmount:null,profitPercent:null,marketRegion:/^[A-Z]{1,5}$/.test(s)?"US":"OTHER",exposureGroup:"OTHER",warnings:[]});
 function normalizeWords(blocks){const out=[];for(const b of blocks||[])for(const p of b.paragraphs||[])for(const l of p.lines||[])for(const w of l.words||[]){if(!w.text?.trim()||!w.bbox)continue;out.push({text:String(w.text).trim(),x:(w.bbox.x0+w.bbox.x1)/2,y:(w.bbox.y0+w.bbox.y1)/2});}return out;}
 function findColumns(words){const header=words.filter(w=>Object.values(aliases).some(re=>re.test(w.text)));return Object.fromEntries(Object.entries(aliases).map(([key,re])=>[key,header.filter(w=>re.test(w.text)).sort((a,b)=>a.y-b.y)[0]||null]));}
 function inferTriplet(tokens){
@@ -33,7 +33,7 @@ function parseArkPortfolioWords(words,width){
     const row=empty(a.symbol),cost=positions.length?number(positions[0].text):null,shareParts=positions.slice(1).sort((x,y)=>x.x-y.x),shareText=shareParts.map(w=>w.text.replace(/[^0-9]/g,"")).join(""),shares=shareText?Number(shareText):null;
     row.name=band.filter(w=>w.x<width*.36&&w!==a&&/[\u3400-\u9fff]/.test(w.text)&&!/^現股$|^價值$/.test(w.text)).sort((x,y)=>x.y-y.y||x.x-y.x).map(w=>w.text).join("").slice(0,30);
     const reportedPercent=percents.length?number(percents[0].text):null,percentEstimate=reportedPercent!==null?Math.round(cost*reportedPercent/100):null,amountRead=amounts.length?profitNumber(amounts[0].text):null;
-    row.shares=Number.isInteger(shares)&&shares>0?shares:null;row.profitPercent=reportedPercent??(cost>0&&amountRead!==null?Math.round(amountRead/cost*10000)/100:null);row.profitAmount=amountRead;
+    row.shares=Number.isInteger(shares)&&shares>0?shares:null;row.costBasis=cost>0?cost:null;row.profitPercent=reportedPercent??(cost>0&&amountRead!==null?Math.round(amountRead/cost*10000)/100:null);row.profitAmount=amountRead;
     if(cost===null||cost<0||reportedPercent===null&&amountRead===null){result.push(checkRow(row));continue;}
     const amountConsistent=amountRead!==null&&percentEstimate!==null&&Math.abs(amountRead-percentEstimate)<=Math.max(10,Math.abs(percentEstimate)*.05);
     const costFromProfit=amountRead!==null&&reportedPercent!==null&&Math.abs(reportedPercent)>1?Math.round(amountRead/(reportedPercent/100)):null;
@@ -42,7 +42,7 @@ function parseArkPortfolioWords(words,width){
     const profitAmount=estimatedCost?amountRead:amountConsistent||percentEstimate===null?amountRead:percentEstimate;
     if(profitAmount===null){result.push(checkRow(row));continue;}
     const marketValue=Math.round(adjustedCost+profitAmount);if(marketValue<=0){result.push(checkRow(row));continue;}
-    Object.assign(row,{currentPrice:row.shares?Math.round(marketValue/row.shares*100)/100:null,marketValue,profitAmount,estimatedValue:true,estimatedProfit:!estimatedCost&&!amountConsistent&&percentEstimate!==null,estimatedCost,source:"ARK_PORTFOLIO"});
+    Object.assign(row,{costBasis:adjustedCost,currentPrice:row.shares?Math.round(marketValue/row.shares*100)/100:null,marketValue,profitAmount,estimatedValue:true,estimatedProfit:!estimatedCost&&!amountConsistent&&percentEstimate!==null,estimatedCost,source:"ARK_PORTFOLIO"});
     result.push(checkRow(row));
   }
   return result;
@@ -99,7 +99,7 @@ function parseHoldingText(text){
   }return result;
 }
 function checkRow(row){
-  const warnings=[];if(!row.shares||!Number.isInteger(row.shares))warnings.push("股數待核對");if(!(row.currentPrice>0))warnings.push("價格待核對");
+  const warnings=[];if(!row.shares||!Number.isInteger(row.shares))warnings.push("股數待核對");if(!(row.costBasis>0))warnings.push("持有總成本待核對");
   if(row.shares>0&&row.currentPrice>0&&row.marketValue>0&&Math.abs(row.shares*row.currentPrice-row.marketValue)/row.marketValue>.08)warnings.push("股數 × 價格與市值不符");
   if(row.estimatedValue)warnings.push("市值／單價由成本＋損益估算，請與券商現值核對");
   if(row.estimatedProfit)warnings.push("損益金額由成本與報酬率估算，請核對");
@@ -112,7 +112,7 @@ function checkRow(row){
 function mergeRows(items){const map=new Map();for(const row of items){if(!row.symbol)continue;const old=map.get(row.symbol)||empty(row.symbol),next={...old};const conflicts=[...(old.conflicts||[])];
     for(const [key,value] of Object.entries(row)){if(key==="warnings"||key==="error"||key==="conflicts"||value===null||value===""||value===undefined)continue;
       if(next[key]===null||next[key]===""||next[key]===undefined||key==="marketRegion"&&next[key]==="OTHER"&&value!=="OTHER")next[key]=value;
-      else if(["shares","currentPrice","marketValue"].includes(key)&&Number(next[key])!==Number(value))conflicts.push(key);
+      else if(["shares","costBasis"].includes(key)&&Number(next[key])!==Number(value))conflicts.push(key);
     }next.conflicts=[...new Set(conflicts)];map.set(row.symbol,checkRow(next));}
   return [...map.values()];}
 function enrichFromExistingETF(items,etfs){
@@ -147,15 +147,15 @@ async function recognize(){
     const mobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     worker=await Tesseract.createWorker(["eng"],Tesseract.OEM.LSTM_ONLY,{workerPath:"vendor/tesseract/worker.min.js",langPath:"vendor/tesseract/lang",corePath:"vendor/tesseract",logger:msg=>{if(msg.progress!=null)$("rebalanceOcrProgressBar").style.width=`${Math.round(msg.progress*80)}%`;}});
     await worker.setParameters({tessedit_pageseg_mode:Tesseract.PSM.SPARSE_TEXT,preserve_interword_spaces:"1"});
-    const detected=[];for(let i=0;i<files.length;i++){setStatus(`正在辨識第 ${i+1}/${files.length} 張…`);let canvas;try{canvas=await prepare(files[i]);const result=await worker.recognize(canvas,{}, {text:true,blocks:true}),words=normalizeWords(result.data.blocks),layout=parseArkPortfolioWords(words,canvas.width),generic=[...parseHoldingWords(words,canvas.width),...parseHoldingText(result.data.text)].filter(r=>r.shares>0&&r.currentPrice>0);if(layout.length)await recoverArkShares(worker,canvas,words,layout);detected.push(...(layout.length?layout:generic));}finally{if(canvas){canvas.width=1;canvas.height=1;}}}
+    const detected=[];for(let i=0;i<files.length;i++){setStatus(`正在辨識第 ${i+1}/${files.length} 張…`);let canvas;try{canvas=await prepare(files[i]);const result=await worker.recognize(canvas,{}, {text:true,blocks:true}),words=normalizeWords(result.data.blocks),layout=parseArkPortfolioWords(words,canvas.width),generic=[...parseHoldingWords(words,canvas.width),...parseHoldingText(result.data.text)].filter(r=>r.shares>0&&r.costBasis>0);if(layout.length)await recoverArkShares(worker,canvas,words,layout);detected.push(...(layout.length?layout:generic));}finally{if(canvas){canvas.width=1;canvas.height=1;}}}
     rows=enrichFromExistingETF(mergeRows(detected),window.currentETFs);$("rebalanceOcrProgressBar").style.width="100%";applyRows(`本機 OCR${mobile?"（手機）":""}`);
   }catch(e){console.error(e);setStatus(`辨識失敗：${String(e?.message||e).slice(0,130)}。請換清晰截圖再試。`);}finally{if(worker)await worker.terminate();$("rebalanceOcrProgress").hidden=true;busy=false;$("rebalanceRunOcr").disabled=!files.length;}
 }
-function eligible(items){const accepted=[],skipped=[];for(const row of items){if(row.symbol&&Number.isInteger(row.shares)&&row.shares>0&&row.currentPrice>0&&row.marketRegion!=="OTHER"&&!row.conflicts?.length&&!(row.marketValue>0&&Math.abs(row.shares*row.currentPrice-row.marketValue)/row.marketValue>.08))accepted.push(row);else skipped.push(row);}return {accepted,skipped};}
+function eligible(items){const accepted=[],skipped=[];for(const row of items){if(row.symbol&&Number.isInteger(row.shares)&&row.shares>0&&row.costBasis>0&&row.marketRegion!=="OTHER"&&!row.conflicts?.length)accepted.push(row);else skipped.push(row);}return {accepted,skipped};}
 function applyRows(provider){
   if(!rows.length){setStatus(`${provider} 未找到可確認的持股代號；請使用包含代號與持股欄位的清晰庫存截圖。`);return;}
   const {accepted,skipped}=eligible(rows);if(accepted.length)window.RebalanceCalculator.importHoldingRows(accepted.map(({warnings,...r})=>r));
-  const missing=skipped.map(r=>r.symbol||"未辨識代號").join("、");setStatus(`${provider} 已套用 ${accepted.length} 檔持股，請展開下方逐筆核對股數、價格與估算市值。${skipped.length?`${skipped.length} 檔（${missing}）資料不足，未套用；請補拍或手動新增。`:""}`);
+  const missing=skipped.map(r=>r.symbol||"未辨識代號").join("、");setStatus(`${provider} 已套用 ${accepted.length} 檔持股，請展開下方逐筆核對股數與持有總成本；價格、市值、損益與報酬率會自動計算。${skipped.length?`${skipped.length} 檔（${missing}）資料不足，未套用；請補拍或手動新增。`:""}`);
   urls.forEach(URL.revokeObjectURL);urls=[];$("rebalanceOcrPreview").innerHTML="";if(accepted.length)$("rebalanceHoldings").scrollIntoView({behavior:"smooth",block:"start"});
 }
 function runOcrSelfTests(){const cases=[],test=(name,fn)=>{try{cases.push([name,Boolean(fn())]);}catch{cases.push([name,false]);}};

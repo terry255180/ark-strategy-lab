@@ -373,7 +373,7 @@
                 <h3 id="rebalanceOcrTitle">從持股庫存截圖匯入</h3>
                 <p>
                   一次選擇最多 4
-                  張庫存明細截圖。Gemini AI 會辨識代號、股數、價格、市值與損益；完整資料直接顯示於下方持股，請核對數值。缺漏資料不會自動補零。Gemini 無法使用時會改用本機 OCR。
+                  張庫存明細截圖。Gemini AI 只辨識股票名稱、代號、持有股數與持有總成本；目前價格由行情服務取得，市值、損益與報酬率由系統計算。請核對辨識資料，缺漏資料不會自動補零。Gemini 無法使用時會改用本機 OCR。
                 </p>
               </div>
               <span class="badge buy">Gemini AI</span>
@@ -565,10 +565,10 @@
       本系統僅供決策支援與歷史研究使用。策略參數為 V1 規則，不代表報酬預測。
     </footer>
     <script src="vendor/tesseract/tesseract.min.js"></script>
-    <script src="config.js?v=3.1"></script>
+    <script src="config.js?v=3.2"></script>
     <script src="buy-engine-v2.js?v=2.7"></script>
     <script src="app.js?v=4.9"></script>
-    <script src="rebalance.js?v=1.9"></script>
-    <script src="rebalance-ocr.js?v=1.7"></script>
+    <script src="rebalance.js?v=2.0"></script>
+    <script src="rebalance-ocr.js?v=1.8"></script>
   </body>
 </html>
