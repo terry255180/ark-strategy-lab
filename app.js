@@ -2254,6 +2254,250 @@ function buildStrategyBacktest(records) {
   });
   return { rows, dates, strategies };
 }
+function normalizeBacktestRows(records) {
+  return (records || [])
+    .filter(
+      (row) =>
+        row.date &&
+        Number(row.taiwanIndex) > 0 &&
+        Number.isFinite(Number(row.arkAllocation)),
+    )
+    .map((row) => ({
+      ...row,
+      taiwanIndex: Number(row.taiwanIndex),
+      arkAllocation: Number(row.arkAllocation),
+    }))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+function calculateExecutionDiagnostics(rows, actions, grossDailyReturns) {
+  let marketUpside = 0,
+    strategyUpside = 0,
+    marketDownside = 0,
+    strategyDownside = 0,
+    chasePullbackLoss = 0,
+    prematureSaleCost = 0,
+    whipsawTrades = 0,
+    previousAction = null;
+  for (let i = 1; i < rows.length; i++) {
+    const marketReturn = rows[i].taiwanIndex / rows[i - 1].taiwanIndex - 1,
+      strategyReturn = grossDailyReturns[i - 1] || 0;
+    if (marketReturn > 0) {
+      marketUpside += marketReturn;
+      strategyUpside += strategyReturn;
+    } else if (marketReturn < 0) {
+      marketDownside += Math.abs(marketReturn);
+      strategyDownside += Math.abs(strategyReturn);
+    }
+  }
+  for (const action of actions) {
+    if (Math.abs(action.delta) < 0.25) continue;
+    const end = Math.min(rows.length - 1, action.index + 5),
+      base = rows[action.index].taiwanIndex,
+      forwards = rows
+        .slice(action.index + 1, end + 1)
+        .map((row) => row.taiwanIndex / base - 1);
+    if (action.delta > 0 && forwards.length) {
+      const pullback = Math.min(0, ...forwards);
+      chasePullbackLoss += (action.delta / 100) * Math.abs(pullback) * 100;
+    }
+    if (action.delta < 0 && forwards.length) {
+      const rebound = Math.max(0, ...forwards);
+      prematureSaleCost += (Math.abs(action.delta) / 100) * rebound * 100;
+    }
+    if (
+      previousAction &&
+      Math.sign(previousAction.delta) !== Math.sign(action.delta) &&
+      action.index - previousAction.index <= 5
+    )
+      whipsawTrades++;
+    previousAction = action;
+  }
+  return {
+    upsideCapture: marketUpside > 0 ? (strategyUpside / marketUpside) * 100 : 0,
+    downsideProtection:
+      marketDownside > 0 ? (1 - strategyDownside / marketDownside) * 100 : 0,
+    chasePullbackLoss,
+    prematureSaleCost,
+    whipsawTrades,
+  };
+}
+function simulateBandStrategy(records, params, costRate = 0) {
+  const rows = normalizeBacktestRows(records),
+    deadBand = Math.max(0, Number(params?.deadBand) || 0),
+    buyRate = clamp(Number(params?.buyRate) || 0, 0, 1),
+    sellRate = clamp(Number(params?.sellRate) || 0, 0, 1);
+  if (rows.length < 2) return null;
+  let allocation = clamp(rows[0].arkAllocation, 0, 100),
+    value = 100,
+    turnover = 0,
+    transactionCost = 0;
+  const values = [value],
+    allocations = [allocation],
+    dailyReturns = [],
+    grossDailyReturns = [],
+    actions = [];
+  for (let i = 1; i < rows.length; i++) {
+    const previousValue = value,
+      marketReturn = rows[i].taiwanIndex / rows[i - 1].taiwanIndex - 1,
+      grossReturn = marketReturn * (allocation / 100);
+    value *= 1 + grossReturn;
+    const gap = rows[i].arkAllocation - allocation,
+      nextAllocation =
+        Math.abs(gap) <= deadBand
+          ? allocation
+          : clamp(allocation + gap * (gap > 0 ? buyRate : sellRate), 0, 100),
+      delta = nextAllocation - allocation,
+      cost = value * (Math.abs(delta) / 100) * (costRate / 100);
+    value -= cost;
+    transactionCost += cost;
+    turnover += Math.abs(delta);
+    if (Math.abs(delta) > 0.0001) actions.push({ index: i, delta });
+    allocation = nextAllocation;
+    values.push(value);
+    allocations.push(allocation);
+    grossDailyReturns.push(grossReturn);
+    dailyReturns.push(value / previousValue - 1);
+  }
+  return {
+    params: { deadBand, buyRate, sellRate },
+    values,
+    allocations,
+    actions,
+    metrics: {
+      ...calculateBacktestMetrics(values, dailyReturns, allocations, turnover),
+      transactionCost,
+      ...calculateExecutionDiagnostics(rows, actions, grossDailyReturns),
+    },
+  };
+}
+function isOutOfSampleImprovement(candidate, benchmark) {
+  return (
+    candidate.cumulativeReturn >= benchmark.cumulativeReturn + 0.01 &&
+    candidate.maxDrawdown >= benchmark.maxDrawdown + 0.01
+  );
+}
+function optimizeWalkForward(records, costRate = 0.2) {
+  const rows = normalizeBacktestRows(records);
+  if (rows.length < 20) return null;
+  const split = Math.floor(rows.length * 0.7),
+    trainingRows = rows.slice(0, split),
+    testingRows = rows.slice(split - 1),
+    benchmarkParams = { deadBand: 0, buyRate: 1, sellRate: 1 },
+    trainingBenchmark = simulateBandStrategy(
+      trainingRows,
+      benchmarkParams,
+      costRate,
+    ),
+    testingBenchmark = simulateBandStrategy(
+      testingRows,
+      benchmarkParams,
+      costRate,
+    ),
+    candidates = [];
+  for (const deadBand of [0.5, 1, 1.5, 2, 3])
+    for (const buyRate of [0.1, 0.15, 0.25, 0.5, 0.75, 1])
+      for (const sellRate of [0.2, 0.25, 0.5, 0.75, 1]) {
+        const result = simulateBandStrategy(
+          trainingRows,
+          { deadBand, buyRate, sellRate },
+          costRate,
+        );
+        candidates.push(result);
+      }
+  const eligible = candidates.filter(
+      (candidate) =>
+        candidate.metrics.maxDrawdown >=
+        trainingBenchmark.metrics.maxDrawdown - 0.5,
+    ),
+    ranked = (eligible.length ? eligible : candidates).sort(
+      (a, b) =>
+        b.metrics.cumulativeReturn - a.metrics.cumulativeReturn ||
+        b.metrics.maxDrawdown - a.metrics.maxDrawdown ||
+        a.metrics.turnover - b.metrics.turnover,
+    ),
+    selectedTraining = ranked[0],
+    selectedTesting = simulateBandStrategy(
+      testingRows,
+      selectedTraining.params,
+      costRate,
+    ),
+    approved = isOutOfSampleImprovement(
+      selectedTesting.metrics,
+      testingBenchmark.metrics,
+    );
+  return {
+    rows,
+    split,
+    trainingRows,
+    testingRows,
+    trainingBenchmark,
+    testingBenchmark,
+    selectedTraining,
+    selectedTesting,
+    ranked: ranked.slice(0, 5),
+    approved,
+    costRate,
+  };
+}
+function renderSensitivityValidation(records) {
+  const container = $("sensitivityResult");
+  if (!container) return;
+  const costRate = clamp(Number($("backtestCostRate")?.value || 0.2), 0, 2),
+    result = optimizeWalkForward(records, costRate),
+    signed = (value) => `${value >= 0 ? "+" : ""}${Number(value).toFixed(2)}%`;
+  if (!result) {
+    container.innerHTML =
+      '<p class="note">至少需要20筆有效資料才能進行70／30驗證。</p>';
+    return;
+  }
+  const parameterText = (params) =>
+      `無動作 ±${params.deadBand}% · 買進補缺口 ${(params.buyRate * 100).toFixed(0)}% · 調節超額 ${(params.sellRate * 100).toFixed(0)}%`,
+    metricRows = [
+      ["淨報酬", "cumulativeReturn", signed],
+      ["最大回撤", "maxDrawdown", signed],
+      ["累計換手", "turnover", (value) => `${value.toFixed(1)}%點`],
+      ["交易成本", "transactionCost", (value) => `${value.toFixed(3)}%`],
+      ["上漲行情參與率", "upsideCapture", (value) => `${value.toFixed(1)}%`],
+      [
+        "下跌行情保護率",
+        "downsideProtection",
+        (value) => `${value.toFixed(1)}%`,
+      ],
+      [
+        "追高後回落損失",
+        "chasePullbackLoss",
+        (value) => `${value.toFixed(3)}%`,
+      ],
+      [
+        "過早賣出機會成本",
+        "prematureSaleCost",
+        (value) => `${value.toFixed(3)}%`,
+      ],
+      ["5日內來回交易", "whipsawTrades", (value) => `${value.toFixed(0)}次`],
+    ],
+    candidate = result.selectedTesting.metrics,
+    benchmark = result.testingBenchmark.metrics;
+  container.innerHTML = `
+    <div class="sensitivity-summary">
+      <div class="sensitivity-box"><span>前70%參數搜尋</span><strong>${result.trainingRows[0].date}～${result.trainingRows.at(-1).date}</strong><small>${parameterText(result.selectedTraining.params)}</small></div>
+      <div class="sensitivity-box"><span>訓練期淨報酬</span><strong>${signed(result.selectedTraining.metrics.cumulativeReturn)}</strong><small>ARK直接配置 ${signed(result.trainingBenchmark.metrics.cumulativeReturn)}</small></div>
+      <div class="sensitivity-box"><span>後30%樣本外驗證</span><strong>${result.rows[result.split].date}～${result.rows.at(-1).date}</strong><small>參數已鎖定，未使用後30%挑選</small></div>
+    </div>
+    <div class="sensitivity-verdict ${result.approved ? "pass" : ""}"><strong>${result.approved ? "樣本外通過，可列入候選" : "樣本外未通過，不允許採用"}</strong><br>${result.approved ? "後30%的淨報酬與最大回撤都至少改善0.01個百分點；仍只列為候選，不會自動改寫正式參數。" : "只有後30%的淨報酬與最大回撤都至少改善0.01個百分點才可採用；目前至少一項未達門檻，正式策略維持不變。"}</div>
+    <div class="sensitivity-ranking oos-metrics"><div class="sensitivity-row metric header"><span>後30%指標</span><span>候選參數</span><span>ARK直接配置</span><span>差異</span></div>${metricRows
+      .map(([label, key, formatter]) => {
+        const difference = candidate[key] - benchmark[key];
+        return `<div class="sensitivity-row metric"><strong>${label}</strong><span>${formatter(candidate[key])}</span><span>${formatter(benchmark[key])}</span><span>${key === "whipsawTrades" ? `${difference >= 0 ? "+" : ""}${difference.toFixed(0)}次` : signed(difference)}</span></div>`;
+      })
+      .join("")}</div>
+    <div class="sensitivity-ranking"><div class="sensitivity-row header"><span>訓練排名</span><span>無動作區</span><span>買進比例</span><span>調節比例</span><span>淨報酬</span><span>最大回撤</span><span>交易成本</span></div>${result.ranked
+      .map(
+        (item, index) =>
+          `<div class="sensitivity-row"><strong>#${index + 1}</strong><span>±${item.params.deadBand}%</span><span>${(item.params.buyRate * 100).toFixed(0)}%</span><span>${(item.params.sellRate * 100).toFixed(0)}%</span><span>${signed(item.metrics.cumulativeReturn)}</span><span>${signed(item.metrics.maxDrawdown)}</span><span>${item.metrics.transactionCost.toFixed(3)}%</span></div>`,
+      )
+      .join("")}</div>
+    <p class="research-warning">單邊交易成本假設 ${costRate.toFixed(2)}%，會依每次配置變動扣除。上漲參與率與下跌保護率以100%持有大盤為基準；追高損失為買進後5日內回落造成的估算損失；過早賣出成本為賣出後5日內上漲的估算機會成本；5日內反向調整且幅度至少0.25個百分點，計為一次來回交易。</p>`;
+}
 function renderStrategyValidation() {
   const year = CONFIG.arkWaterLevels.year,
     records = getAnnualArkRecords(window.centralRecords || [], year),
@@ -2265,6 +2509,7 @@ function renderStrategyValidation() {
     $("backtestConclusion").textContent = "尚無法形成驗證結論。";
     $("backtestChart").innerHTML = "";
     $("backtestTable").innerHTML = "";
+    renderSensitivityValidation(records);
     return;
   }
   $("backtestCount").textContent =
@@ -2311,6 +2556,7 @@ function renderStrategyValidation() {
     `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="三種配置策略淨值曲線">${gridValues.map((value) => `<line class="grid" x1="${left}" x2="${width - right}" y1="${y(value)}" y2="${y(value)}"/><text x="2" y="${y(value) + 3}">${value.toFixed(1)}</text>`).join("")}${result.strategies.map((strategy) => `<polyline class="line ${strategy.key}" points="${strategy.values.map((value, index) => `${x(index)},${y(value)}`).join(" ")}"/>`).join("")}<text x="${left}" y="${height - 5}">${result.dates[0].slice(5).replace("-", "/")}</text><text x="${width - right}" y="${height - 5}" text-anchor="end">${result.dates.at(-1).slice(5).replace("-", "/")}</text></svg>`;
   $("backtestTable").innerHTML =
     `<div class="backtest-row header"><span>策略</span><span>累積報酬</span><span>最大回撤</span><span>年化波動</span><span>累計換手</span><span>平均持股</span></div>${result.strategies.map((strategy) => `<div class="backtest-row"><strong>${strategy.name}</strong><span>${signed(strategy.metrics.cumulativeReturn)}</span><span>${signed(strategy.metrics.maxDrawdown)}</span><span>${strategy.metrics.annualVolatility.toFixed(2)}%</span><span>${strategy.metrics.turnover.toFixed(1)}%點</span><span>${strategy.metrics.averageAllocation.toFixed(1)}%</span></div>`).join("")}`;
+  renderSensitivityValidation(records);
 }
 function quantile(values, p) {
   const sorted = values
@@ -3531,6 +3777,73 @@ function runSelfTests() {
       )
     );
   });
+  test("交易成本會降低淨報酬並列出成本", () => {
+    const rows = [
+        { date: "2026-01-01", taiwanIndex: 100, arkAllocation: 50 },
+        { date: "2026-01-02", taiwanIndex: 102, arkAllocation: 80 },
+        { date: "2026-01-03", taiwanIndex: 101, arkAllocation: 40 },
+      ],
+      noCost = simulateBandStrategy(
+        rows,
+        { deadBand: 0, buyRate: 1, sellRate: 1 },
+        0,
+      ),
+      withCost = simulateBandStrategy(
+        rows,
+        { deadBand: 0, buyRate: 1, sellRate: 1 },
+        0.2,
+      );
+    return (
+      withCost.metrics.transactionCost > 0 &&
+      withCost.metrics.cumulativeReturn < noCost.metrics.cumulativeReturn
+    );
+  });
+  test("70／30驗證只以後30%決定是否採用", () => {
+    const rows = Array.from({ length: 30 }, (_, index) => ({
+        date: `2026-01-${String(index + 1).padStart(2, "0")}`,
+        taiwanIndex: 100 + index,
+        arkAllocation: 65 + (index % 5),
+      })),
+      result = optimizeWalkForward(rows, 0.2);
+    return (
+      result.split === 21 &&
+      result.trainingRows.length === 21 &&
+      result.testingRows.length === 10 &&
+      result.approved ===
+        isOutOfSampleImprovement(
+          result.selectedTesting.metrics,
+          result.testingBenchmark.metrics,
+        )
+    );
+  });
+  test("樣本外淨報酬與回撤必須同時改善", () =>
+    isOutOfSampleImprovement(
+      { cumulativeReturn: 11, maxDrawdown: -8 },
+      { cumulativeReturn: 10, maxDrawdown: -10 },
+    ) &&
+    !isOutOfSampleImprovement(
+      { cumulativeReturn: 11, maxDrawdown: -12 },
+      { cumulativeReturn: 10, maxDrawdown: -10 },
+    ));
+  test("執行診斷包含參與率、保護率與來回交易", () => {
+    const result = simulateBandStrategy(
+      [
+        { date: "2026-01-01", taiwanIndex: 100, arkAllocation: 50 },
+        { date: "2026-01-02", taiwanIndex: 105, arkAllocation: 80 },
+        { date: "2026-01-03", taiwanIndex: 100, arkAllocation: 40 },
+        { date: "2026-01-04", taiwanIndex: 106, arkAllocation: 75 },
+      ],
+      { deadBand: 0, buyRate: 1, sellRate: 1 },
+      0.2,
+    );
+    return (
+      Number.isFinite(result.metrics.upsideCapture) &&
+      Number.isFinite(result.metrics.downsideProtection) &&
+      result.metrics.whipsawTrades >= 2 &&
+      result.metrics.chasePullbackLoss > 0 &&
+      result.metrics.prematureSaleCost > 0
+    );
+  });
   const v2 = window.BuyEngineV2.runBuyEngineSelfTests();
   v2.tests.forEach((x) => tests.push([`BUY V2 · ${x.name}`, x.ok]));
   const passed = tests.filter((t) => t[1]).length,
@@ -3563,6 +3876,9 @@ function bind() {
   document
     .querySelectorAll(".inputs-card input,.inputs-card select")
     .forEach((el) => el.addEventListener("input", renderDashboard));
+  $("backtestCostRate")?.addEventListener("input", () =>
+    renderStrategyValidation(),
+  );
   $("etfCards").addEventListener("change", (event) => {
     const el = event.target,
       index = Number(el.dataset.etfIndex),
@@ -3669,7 +3985,12 @@ window.ARKStrategyLab = {
   summarizeArkEvents,
   calculateBacktestMetrics,
   buildStrategyBacktest,
+  calculateExecutionDiagnostics,
+  simulateBandStrategy,
+  isOutOfSampleImprovement,
+  optimizeWalkForward,
   renderStrategyValidation,
+  renderSensitivityValidation,
   summarizePositionExecution,
   buildAllocationSummary,
   buildTrendSummary,
