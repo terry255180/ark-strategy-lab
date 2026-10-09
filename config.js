@@ -153,7 +153,7 @@ window.CONFIG = Object.freeze({
       weakMaxPoints: 6,
       strongMaxDiscount: 4,
       minimumPeers: 2,
-      cacheHours: 12,
+      cacheHours: 0.25,
     },
     optimizer: {
       maxHoldings: 40,
@@ -166,7 +166,7 @@ window.CONFIG = Object.freeze({
     storageKeys: {
       state: "arkStrategyLab.rebalance.state.v1",
       history: "arkStrategyLab.rebalance.history.v1",
-      performance: "arkStrategyLab.rebalance.performance.v8",
+      performance: "arkStrategyLab.rebalance.performance.v9",
     },
   },
   deadBand: 1,

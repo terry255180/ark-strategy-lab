@@ -33,6 +33,8 @@ test("代號清理會去重並排除無效內容",()=>assert.deepEqual(normalize
 
 test("Yahoo 台股搜尋結果會移除交易所尾碼",()=>assert.deepEqual(normalizeQuote({symbol:"2330.TW",longname:"台灣積體電路製造股份有限公司",quoteType:"EQUITY"}),{symbol:"2330",name:"台灣積體電路製造股份有限公司",exchangeSuffix:"TW",marketRegion:"TW",assetType:"STOCK"}));
 
+test("已知 ETF 優先顯示中文名稱",()=>assert.equal(normalizeQuote({symbol:"0050.TW",longname:"Yuanta/P-shares Taiwan Top 50 ETF",quoteType:"ETF"}).name,"元大台灣50"));
+
 test("股票名稱可經 search API 找到台股代號",async()=>{
   const originalFetch=global.fetch;global.fetch=async()=>({ok:true,json:async()=>({quotes:[{symbol:"2330.TW",longname:"台灣積體電路製造股份有限公司"}]})});
   try{const res=responseRecorder();await searchHandler({method:"GET",query:{q:"台積電"}},res);assert.equal(res.statusCode,200);assert.equal(res.payload.item.symbol,"2330");}finally{global.fetch=originalFetch;}
@@ -40,7 +42,7 @@ test("股票名稱可經 search API 找到台股代號",async()=>{
 
 test("returns API 可取得並回傳行情",async()=>{
   const originalFetch=global.fetch;global.fetch=async()=>({ok:true,json:async()=>yahooFixture()});
-  try{const res=responseRecorder();await returnsHandler({method:"GET",query:{symbols:"0050"}},res);assert.equal(res.statusCode,200);assert.equal(res.payload.ok,true);assert.equal(res.payload.items[0].symbol,"0050");assert.ok(res.headers["Cache-Control"].includes("s-maxage"));}finally{global.fetch=originalFetch;}
+  try{const res=responseRecorder();await returnsHandler({method:"GET",query:{symbols:"0050"}},res);assert.equal(res.statusCode,200);assert.equal(res.payload.ok,true);assert.equal(res.payload.items[0].symbol,"0050");assert.equal(res.payload.items[0].name,"元大台灣50");assert.ok(res.headers["Cache-Control"].includes("s-maxage=900"));}finally{global.fetch=originalFetch;}
 });
 
 test("vision API 驗證密碼並正規化 Gemini 回應",async()=>{

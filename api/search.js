@@ -1,9 +1,10 @@
 "use strict";
+const {ETF_NAMES}=require("../lib/gemini");
 
 function normalizeQuote(quote){
   const rawSymbol=String(quote?.symbol||"").toUpperCase(),match=rawSymbol.match(/^([0-9]{4,6}[A-Z]?)\.(TW|TWO)$/);
   if(!match)return null;
-  return {symbol:match[1],name:String(quote.longname||quote.shortname||match[1]).trim(),exchangeSuffix:match[2],marketRegion:"TW",assetType:String(quote.quoteType||"").toUpperCase()==="ETF"?"ETF":"STOCK"};
+  return {symbol:match[1],name:ETF_NAMES[match[1]]||String(quote.longname||quote.shortname||match[1]).trim(),exchangeSuffix:match[2],marketRegion:"TW",assetType:String(quote.quoteType||"").toUpperCase()==="ETF"?"ETF":"STOCK"};
 }
 
 module.exports=async function handler(req,res){

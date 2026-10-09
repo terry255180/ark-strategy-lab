@@ -256,7 +256,7 @@ function importHoldingRows(rows){
 }
 function saveState(){localStorage.setItem(C.storageKeys.state,JSON.stringify(state));}
 function loadPerformanceCache(){try{return JSON.parse(localStorage.getItem(C.storageKeys.performance)||"null");}catch{return null;}}
-function applyPerformance(items){const map=new Map((items||[]).map(item=>[String(item.symbol||"").toUpperCase(),item]));state.holdings=state.holdings.map(h=>{const quote=map.get(String(h.symbol).toUpperCase()),periodReturns=quote||h.periodReturns||null;return {...h,...calculateHoldingMetrics(h,quote?.latestPrice??h.currentPrice),periodReturns};});saveState();renderHoldingEditor();if(lastPlan)renderRebalanceCalculator();}
+function applyPerformance(items){const map=new Map((items||[]).map(item=>[String(item.symbol||"").toUpperCase(),item]));state.holdings=state.holdings.map(h=>{const quote=map.get(String(h.symbol).toUpperCase()),periodReturns=quote||h.periodReturns||null;return {...h,...(quote?.name?{name:quote.name}:{}),...calculateHoldingMetrics(h,quote?.latestPrice??h.currentPrice),periodReturns};});saveState();renderHoldingEditor();if(lastPlan)renderRebalanceCalculator();}
 async function refreshPerformance(force=false){
   const symbols=[...new Set(state.holdings.map(h=>String(h.symbol||"").toUpperCase()).filter(Boolean))];if(!symbols.length||!C.performance?.enabled)return;
   const cached=loadPerformanceCache(),maxAge=(C.performance.cacheHours||12)*3600000;
@@ -264,7 +264,7 @@ async function refreshPerformance(force=false){
   if(!force&&cached?.savedAt&&Date.now()-cached.savedAt<maxAge&&symbols.every(symbol=>cachedSymbols.has(symbol))){applyPerformance(cached.items);return;}
   const endpoint=CONFIG.performanceEndpoint||CONFIG.imageImport?.visionEndpoint||CONFIG.googleSheets?.webAppUrl;if(!endpoint)return;
   performanceLoading=true;if(lastPlan)renderRebalanceCalculator();
-  try{const url=new URL(endpoint,location.href);url.searchParams.set("symbols",symbols.join(","));const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();if(!data.ok||!Array.isArray(data.items))throw new Error(data.error||"期間報酬格式錯誤");applyPerformance(data.items);localStorage.setItem(C.storageKeys.performance,JSON.stringify({savedAt:Date.now(),items:data.items,source:data.source,asOf:data.asOf}));}
+  try{const url=new URL(endpoint,location.href);url.searchParams.set("symbols",symbols.join(","));url.searchParams.set("refresh",String(Math.floor(Date.now()/900000)));const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();if(!data.ok||!Array.isArray(data.items))throw new Error(data.error||"期間報酬格式錯誤");applyPerformance(data.items);localStorage.setItem(C.storageKeys.performance,JSON.stringify({savedAt:Date.now(),items:data.items,source:data.source,asOf:data.asOf}));}
   catch(error){console.warn("ETF performance unavailable",error);}
   finally{performanceLoading=false;if(lastPlan)renderRebalanceCalculator();}
 }
