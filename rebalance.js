@@ -14,6 +14,11 @@ const api=window.ARKStrategyLab;
 function calculateTargetReduction(decision,actualAllocation,totalAssets){
   return decision?.action==="SELL"&&totalAssets>0?Math.max(0,(actualAllocation-decision.target)*totalAssets/100):0;
 }
+function calculatePortfolioTotal(holdings,actualAllocation){
+  const holdingValue=(holdings||[]).reduce((sum,h)=>sum+Math.max(0,finite(h.marketValue)||finite(h.shares)*finite(h.currentPrice)),0);
+  const allocation=finite(actualAllocation);
+  return allocation>0?holdingValue/(allocation/100):holdingValue;
+}
 function calculateUSMarketRegime(cnn,more={}){
   const band=C.usCnnBands.find(x=>cnn<=x.max)||C.usCnnBands.at(-1),u=C.usSignals;
   const signals=[];let factor=band.factor;
@@ -163,14 +168,14 @@ function generateAlternativePlans(target,scored,options){
   for(const v of variants){const plan=optimizeSellShares(target,v.rows,options),sig=plan.soldHoldings.map(x=>`${x.symbol}:${x.sellShares}`).join("|");if(sig&&sig!==options.primarySignature&&!plans.some(p=>p.signature===sig))plans.push({...plan,name:v.name,signature:sig});}return plans.slice(0,2);
 }
 function buildPlan(decision,input,holdings,settings,records){
-  const target=optionsTarget(decision,input.actualAllocation,settings),twMetrics=marketMetrics(records,input.rsi,input.margin);
-  const markets={tw:calculateTaiwanMarketRegime(twMetrics),us:calculateUSMarketRegime(input.cnn,{rsi:settings.usRsi,bias:settings.usBias,percentile:settings.usPercentile,recentReturn:settings.usReturn})};
-  const clean=holdings.map(normalizedHolding).filter(x=>x.symbol&&x.shares>0&&x.currentPrice>0).slice(0,C.optimizer.maxHoldings),totalAssets=settings.totalAssets||clean.reduce((n,x)=>n+x.marketValue,0);
+  const clean=holdings.map(normalizedHolding).filter(x=>x.symbol&&x.shares>0&&x.currentPrice>0).slice(0,C.optimizer.maxHoldings),totalAssets=calculatePortfolioTotal(clean,input.actualAllocation),effectiveSettings={...settings,totalAssets,targetOverride:null,usRsi:null,usBias:null,usPercentile:null,usReturn:null};
+  const target=optionsTarget(decision,input.actualAllocation,effectiveSettings),twMetrics=marketMetrics(records,input.rsi,input.margin);
+  const markets={tw:calculateTaiwanMarketRegime(twMetrics),us:calculateUSMarketRegime(input.cnn)};
   const performanceScores=calculatePerformanceScores(clean),context={holdings:clean,totalAssets,markets,regime:decision.regime,performanceScores};const scored=clean.map(x=>calculateSellPriority(x,context)).sort((a,b)=>b.sellPriorityScore-a.sellPriorityScore);
-  const allocations=allocateReductionAcrossMarkets(target,scored),options={oddLot:settings.oddLot,allowFullExit:settings.allowFullExit,regime:decision.regime};
+  const allocations=allocateReductionAcrossMarkets(target,scored),options={oddLot:effectiveSettings.oddLot,allowFullExit:effectiveSettings.allowFullExit,regime:decision.regime};
   const primary=optimizeSellShares(target,scored,options),primarySignature=primary.soldHoldings.map(x=>`${x.symbol}:${x.sellShares}`).join("|");
   const alternatives=generateAlternativePlans(target,scored,{...options,primarySignature});
-  return {target,decision,input,twMetrics,markets,allocations,scored,primary,alternatives,settings};
+  return {target,decision,input,twMetrics,markets,allocations,scored,primary,alternatives,settings:effectiveSettings};
 }
 function optionsTarget(decision,actual,settings){return settings.targetOverride!=null?Math.max(0,settings.targetOverride):calculateTargetReduction(decision,actual,settings.totalAssets);}
 function saveRebalanceSnapshot(plan){
@@ -206,15 +211,14 @@ function renderSellExplanation(plan){const top=plan.primary.soldHoldings[0];cons
 function renderRebalanceCalculator(){
   const input=window.ARKStrategyLab?.getInput?.(),decision=window.currentDecision;
   if(!input||!decision)return;
+  state.totalAssets=calculatePortfolioTotal(state.holdings,input.actualAllocation);
   autoTarget=calculateTargetReduction(decision,input.actualAllocation,state.totalAssets);
-  $("rebalanceSummary").innerHTML=`<div><span>ARK 目標</span><strong>${pct(input.todayArk)}</strong></div><div><span>實際配置</span><strong>${pct(input.actualAllocation,2)}</strong></div><div><span>超額缺口</span><strong>${Math.max(0,-decision.gap).toFixed(2)}%</strong></div><div><span>賣出狀態</span><strong>${safe(regimeZh(decision.regime))}</strong></div><div><span>自動目標</span><strong>${money(autoTarget)}</strong></div>`;
-  if(document.activeElement!==$("rebalanceTarget"))$("rebalanceTarget").placeholder=autoTarget?money(autoTarget):"尚無自動調節目標；可手動覆寫";
   if(!lastPlan)return;
   const plan=buildPlan(decision,input,state.holdings,state,window.centralRecords||[]);lastPlan=plan;renderResults(plan);
 }
 function renderResults(plan){
   const alloc=plan.allocations;$("rebalanceResults").innerHTML=`<div class="rebalance-result-grid">${renderMarketRegime(plan)}<div class="rebalance-mini"><strong>市場調節分配</strong><span>台股 ${money(alloc.TW.amount)} · ${(alloc.TW.share*100).toFixed(0)}%</span><span>美股／全球 ${money(alloc["US / GLOBAL"].amount)} · ${(alloc["US / GLOBAL"].share*100).toFixed(0)}%</span></div></div>${renderSellPlan(plan)}${renderPerformanceComparison(plan)}${renderSellExplanation(plan)}`;
-  $("rebalanceNotice").textContent=plan.decision.action!=="SELL"&&state.targetOverride==null?"目前賣出引擎沒有調節訊號；如要研究假設情境，可手動輸入目標金額。":plan.target>0?`已計算 ${money(plan.target)} 調節目標。請核對持股、價格及股數，方案不會自動下單。`:"調節目標為 0；不產生賣單。";
+  $("rebalanceNotice").textContent=plan.decision.action!=="SELL"?"目前賣出引擎沒有調節訊號。":plan.target>0?`已計算 ${money(plan.target)} 調節目標。請核對持股、價格及股數，方案不會自動下單。`:"調節目標為 0；不產生賣單。";
 }
 function renderHoldingEditor(){
   $("rebalanceHoldings").innerHTML=state.holdings.map((h,i)=>`<div class="rebalance-holding"><details ${i===state.holdings.length-1?"open":""}><summary>${safe(h.symbol||"新持股")} ${safe(h.name)} · ${money(h.marketValue||h.shares*h.currentPrice)}</summary><div class="rebalance-fields">
@@ -268,9 +272,9 @@ async function refreshPerformance(force=false){
   catch(error){console.warn("ETF performance unavailable",error);}
   finally{performanceLoading=false;if(lastPlan)renderRebalanceCalculator();}
 }
-function readInputs(){state.totalAssets=Math.max(0,finite($("rebalanceTotalAssets").value));state.targetOverride=optional($("rebalanceTarget").value);state.usRsi=optional($("rebalanceUsRsi").value);state.usBias=optional($("rebalanceUsBias").value);state.usPercentile=optional($("rebalanceUsPercentile").value);state.usReturn=optional($("rebalanceUsReturn").value);state.oddLot=$("rebalanceOddLot").checked;state.allowFullExit=$("rebalanceFullExit").checked;saveState();}
+function readInputs(){const input=api.getInput();state.totalAssets=calculatePortfolioTotal(state.holdings,input.actualAllocation);state.targetOverride=null;state.usRsi=null;state.usBias=null;state.usPercentile=null;state.usReturn=null;state.oddLot=$("rebalanceOddLot").checked;state.allowFullExit=$("rebalanceFullExit").checked;saveState();}
 function loadState(){try{const saved=JSON.parse(localStorage.getItem(C.storageKeys.state)||"null");if(saved&&typeof saved==="object")state={...state,...saved,holdings:Array.isArray(saved.holdings)?saved.holdings.slice(0,C.optimizer.maxHoldings).map(normalizedHolding):[]};}catch{}
-  for(const [id,value] of [["rebalanceTotalAssets",state.totalAssets],["rebalanceTarget",state.targetOverride],["rebalanceUsRsi",state.usRsi],["rebalanceUsBias",state.usBias],["rebalanceUsPercentile",state.usPercentile],["rebalanceUsReturn",state.usReturn]])$(id).value=value??"";
+  state.targetOverride=null;state.usRsi=null;state.usBias=null;state.usPercentile=null;state.usReturn=null;
   $("rebalanceOddLot").checked=state.oddLot;$("rebalanceFullExit").checked=state.allowFullExit;}
 function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push({name,ok:Boolean(fn())});}catch{tests.push({name,ok:false});}};
   const tw={factor:1.2},us=calculateUSMarketRegime(33),markets={tw,us};const raw=[{...defaultHolding(),symbol:"00631L",marketValue:210300,shares:1000,currentPrice:210.3,profitPercent:40.34,leveraged:true,inArkToday:true,exposureGroup:"TAIWAN_LARGE_CAP"},{...defaultHolding(),symbol:"0050",marketValue:143000,shares:1000,currentPrice:143,profitPercent:27.86,inArkToday:true,exposureGroup:"TAIWAN_LARGE_CAP"},{...defaultHolding(),symbol:"006208",marketValue:128800,shares:1000,currentPrice:128.8,profitPercent:232.58,inArkToday:true,exposureGroup:"TAIWAN_LARGE_CAP"}];
@@ -288,6 +292,7 @@ function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push(
   test("今年、1年、3年報酬各自獨立排名",()=>rankHoldingsByReturn(ranked,"ytd")[0].symbol==="A"&&rankHoldingsByReturn(ranked,"oneYear")[0].symbol==="B"&&rankHoldingsByReturn(ranked,"threeYear")[0].symbol==="B");
   test("價格、股數與成本可計算市值損益報酬",()=>{const x=calculateHoldingMetrics({shares:100,costBasis:15000},200);return x.marketValue===20000&&x.profitAmount===5000&&x.profitPercent===33.33;});
   test("成本均價可換算持有總成本",()=>{const x=calculateHoldingMetrics({shares:100,averageCost:150},200);return x.costBasis===15000&&x.marketValue===20000&&x.profitAmount===5000&&x.profitPercent===33.33;});
+  test("總資產由持股市值與上方實際配置自動推算",()=>calculatePortfolioTotal([{marketValue:500000}],50)===1000000);
   const opt=optimizeSellShares(40000,scored,{oddLot:true,allowFullExit:false,regime:"RISK_OFF"});
   test("股數不超過庫存",()=>opt.soldHoldings.every(x=>x.sellShares<=x.shares));
   test("零股方案接近 40000",()=>Math.abs(opt.actualReduction-40000)<500);
@@ -296,7 +301,7 @@ function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push(
   return {passed:tests.filter(x=>x.ok).length,total:tests.length,tests};
 }
 function init(){loadState();const cached=loadPerformanceCache();if(cached?.items)applyPerformance(cached.items);renderHoldingEditor();renderRebalanceCalculator();
-  for(const id of ["rebalanceTotalAssets","rebalanceTarget","rebalanceUsRsi","rebalanceUsBias","rebalanceUsPercentile","rebalanceUsReturn","rebalanceOddLot","rebalanceFullExit"])$(id).addEventListener("change",()=>{readInputs();renderRebalanceCalculator();});
+  for(const id of ["rebalanceOddLot","rebalanceFullExit"])$(id).addEventListener("change",()=>{readInputs();renderRebalanceCalculator();});
   $("rebalanceAddHolding").addEventListener("click",()=>{if(state.holdings.length>=C.optimizer.maxHoldings)return;state.holdings.push(defaultHolding());saveState();renderHoldingEditor();});
   $("rebalanceHoldings").addEventListener("change",async e=>{const i=Number(e.target.dataset.holding),key=e.target.dataset.field;if(!key||!state.holdings[i])return;state.holdings[i][key]=e.target.type==="checkbox"?e.target.checked:e.target.type==="number"?finite(e.target.value):e.target.value;if(key==="identifier"){state.holdings[i].symbol="";state.holdings[i].name="";saveState();await resolveHoldingIdentifier(i,state.holdings[i].identifier);renderRebalanceCalculator();return;}if(key==="shares"||key==="averageCost")Object.assign(state.holdings[i],calculateHoldingMetrics(state.holdings[i],state.holdings[i].currentPrice));saveState();if(key==="shares"||key==="averageCost")renderHoldingEditor();renderRebalanceCalculator();});
   $("rebalanceHoldings").addEventListener("click",e=>{const b=e.target.closest("[data-remove-holding]");if(!b)return;state.holdings.splice(Number(b.dataset.removeHolding),1);saveState();renderHoldingEditor();renderRebalanceCalculator();});
@@ -304,7 +309,7 @@ function init(){loadState();const cached=loadPerformanceCache();if(cached?.items
   $("rebalanceSave").addEventListener("click",()=>{if(!lastPlan){$("rebalanceNotice").textContent="請先計算調節方案。";return;}saveRebalanceSnapshot(lastPlan);$("rebalanceNotice").textContent="已將本次方案與策略版本儲存於此裝置。";});
   // Existing engine is left untouched; observe completed renders.
   const observer=new MutationObserver(()=>renderRebalanceCalculator());observer.observe($("targetExecution"),{childList:true});
-  window.RebalanceCalculator={calculateTargetReduction,calculateUSMarketRegime,calculateTaiwanMarketRegime,calculateMarketSellFactor,calculateArkPersistence,calculateSingleConcentration,calculateExposureGroupConcentration,calculateProfitBuffer,calculateHoldingMetrics,calculatePerformanceScores,rankHoldingsByReturn,calculateSellPriority,generateSellReasons,allocateReductionAcrossMarkets,optimizeSellShares,generateAlternativePlans,saveRebalanceSnapshot,renderRebalanceCalculator,renderMarketRegime,renderSellPlan,renderSellExplanation,renderPerformanceComparison,runRebalanceSelfTests,buildPlan,importHoldingRows,refreshPerformance,resolveHoldingIdentifier};
+  window.RebalanceCalculator={calculateTargetReduction,calculatePortfolioTotal,calculateUSMarketRegime,calculateTaiwanMarketRegime,calculateMarketSellFactor,calculateArkPersistence,calculateSingleConcentration,calculateExposureGroupConcentration,calculateProfitBuffer,calculateHoldingMetrics,calculatePerformanceScores,rankHoldingsByReturn,calculateSellPriority,generateSellReasons,allocateReductionAcrossMarkets,optimizeSellShares,generateAlternativePlans,saveRebalanceSnapshot,renderRebalanceCalculator,renderMarketRegime,renderSellPlan,renderSellExplanation,renderPerformanceComparison,runRebalanceSelfTests,buildPlan,importHoldingRows,refreshPerformance,resolveHoldingIdentifier};
   const tests=runRebalanceSelfTests(),list=$("selfTestList");if(list){list.insertAdjacentHTML("beforeend",tests.tests.map(x=>`<li>${x.ok?"通過":"失敗"} · 調節：${safe(x.name)}</li>`).join(""));const counts=$("selfTestBadge").textContent.match(/(\d+)\s*\/\s*(\d+)/),old=Number(counts?.[1]||0),total=Number(counts?.[2]||0);$("selfTestBadge").textContent=`${old+tests.passed} / ${total+tests.total} 通過`;$("selfTestBadge").className=`badge ${old+tests.passed===total+tests.total?"buy":"sell"}`;}
 }
 document.addEventListener("DOMContentLoaded",init);
