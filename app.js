@@ -576,20 +576,49 @@ function parseETFData(text) {
 let ocrFiles = [];
 let ocrObjectUrls = [];
 let ocrRows = [];
-function fileToBase64Payload(file) {
+function blobToBase64Payload(blob, fileName = "圖片") {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const [header, data] = String(reader.result || "").split(",", 2);
       resolve({
         mimeType:
-          (header.match(/^data:([^;]+)/) || [])[1] || file.type || "image/jpeg",
+          (header.match(/^data:([^;]+)/) || [])[1] || blob.type || "image/jpeg",
         data,
       });
     };
-    reader.onerror = () => reject(new Error(`無法讀取圖片：${file.name}`));
-    reader.readAsDataURL(file);
+    reader.onerror = () => reject(new Error(`無法讀取圖片：${fileName}`));
+    reader.readAsDataURL(blob);
   });
+}
+async function fileToBase64Payload(file, maxBytes = 700000) {
+  if (/^image\/(jpeg|jpg|png|webp)$/i.test(file.type) && file.size <= maxBytes)
+    return blobToBase64Payload(file, file.name);
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+    let scale = Math.min(1, 2000 / Math.max(bitmap.width, bitmap.height));
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const quality = Math.max(0.58, 0.88 - attempt * 0.08),
+        blob = await new Promise((resolve) =>
+          canvas.toBlob(resolve, "image/jpeg", quality),
+        );
+      canvas.width = 1;
+      canvas.height = 1;
+      if (blob && (blob.size <= maxBytes || attempt === 4))
+        return blobToBase64Payload(blob, file.name);
+      scale *= 0.82;
+    }
+  } catch (error) {
+    throw new Error(`無法壓縮圖片 ${file.name}：${error?.message || error}`);
+  } finally {
+    bitmap?.close?.();
+  }
+  throw new Error(`圖片 ${file.name} 無法處理`);
 }
 async function extractWithGeminiVision(
   images,
@@ -599,10 +628,12 @@ async function extractWithGeminiVision(
   const endpoint =
       CONFIG.imageImport.visionEndpoint || CONFIG.googleSheets?.webAppUrl,
     token = $(tokenInputId)?.value.trim() || $("visionAccessToken")?.value.trim();
-  if (!endpoint) throw new Error("尚未設定 Gemini Apps Script 端點");
+  if (!endpoint) throw new Error("尚未設定 Gemini Vercel API");
   if (!token) throw new Error("請先輸入 AI 辨識密碼");
-  const payloadImages = await Promise.all(
-      (images || []).map(fileToBase64Payload),
+  const imageFiles = images || [],
+    maxImageBytes = Math.min(850000, Math.floor(3000000 / Math.max(1, imageFiles.length))),
+    payloadImages = await Promise.all(
+      imageFiles.map((file) => fileToBase64Payload(file, maxImageBytes)),
     ),
     response = await fetch(endpoint, {
       method: "POST",

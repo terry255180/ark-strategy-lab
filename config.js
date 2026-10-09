@@ -60,12 +60,10 @@ window.CONFIG = Object.freeze({
   imageImport: Object.freeze({
     provider: "GeminiVisionProvider",
     maxScreenshots: 5,
-    visionEndpoint:
-      "https://script.google.com/macros/s/AKfycby_pcukAJMHn-Z_yzeCPqDc35QbSotwAQX0GrMl9i6uSj-JFz_X4DGHxkiSgM7zrK7BNg/exec",
+    visionEndpoint: "/api/vision",
     requireUserConfirmation: true,
   }),
-  performanceEndpoint:
-    "https://script.google.com/macros/s/AKfycby_pcukAJMHn-Z_yzeCPqDc35QbSotwAQX0GrMl9i6uSj-JFz_X4DGHxkiSgM7zrK7BNg/exec",
+  performanceEndpoint: "/api/returns",
   rebalance: {
     strategyVersion: "REBALANCE_V1.0",
     status: "HEURISTIC · NOT BACKTEST OPTIMIZED",
@@ -167,7 +165,7 @@ window.CONFIG = Object.freeze({
     storageKeys: {
       state: "arkStrategyLab.rebalance.state.v1",
       history: "arkStrategyLab.rebalance.history.v1",
-      performance: "arkStrategyLab.rebalance.performance.v7",
+      performance: "arkStrategyLab.rebalance.performance.v8",
     },
   },
   deadBand: 1,

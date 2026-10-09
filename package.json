@@ -1,0 +1,12 @@
+{
+  "name": "ark-strategy-lab",
+  "private": true,
+  "version": "2.1.0",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check app.js && node --check buy-engine-v2.js && node --check rebalance.js && node --check rebalance-ocr.js && node --check api/vision.js && node --check api/returns.js && node --check lib/gemini.js && node --check lib/yahoo.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

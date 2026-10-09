@@ -245,7 +245,7 @@ async function refreshPerformance(force=false){
   if(!force&&cached?.savedAt&&Date.now()-cached.savedAt<maxAge&&symbols.every(symbol=>cachedSymbols.has(symbol))){applyPerformance(cached.items);return;}
   const endpoint=CONFIG.performanceEndpoint||CONFIG.imageImport?.visionEndpoint||CONFIG.googleSheets?.webAppUrl;if(!endpoint)return;
   performanceLoading=true;if(lastPlan)renderRebalanceCalculator();
-  try{const url=new URL(endpoint);url.searchParams.set("action","returns");url.searchParams.set("symbols",symbols.join(","));const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();if(!data.ok||!Array.isArray(data.items))throw new Error(data.error||"期間報酬格式錯誤");applyPerformance(data.items);localStorage.setItem(C.storageKeys.performance,JSON.stringify({savedAt:Date.now(),items:data.items,source:data.source,asOf:data.asOf}));}
+  try{const url=new URL(endpoint,location.href);url.searchParams.set("symbols",symbols.join(","));const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();if(!data.ok||!Array.isArray(data.items))throw new Error(data.error||"期間報酬格式錯誤");applyPerformance(data.items);localStorage.setItem(C.storageKeys.performance,JSON.stringify({savedAt:Date.now(),items:data.items,source:data.source,asOf:data.asOf}));}
   catch(error){console.warn("ETF performance unavailable",error);}
   finally{performanceLoading=false;if(lastPlan)renderRebalanceCalculator();}
 }
