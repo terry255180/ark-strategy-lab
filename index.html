@@ -8,7 +8,7 @@
     />
     <meta name="color-scheme" content="dark" />
     <title>ARK Strategy Lab｜方舟策略實驗室</title>
-    <link rel="stylesheet" href="styles.css?v=3.6" />
+    <link rel="stylesheet" href="styles.css?v=3.7" />
   </head>
   <body>
     <header class="topbar">
@@ -353,6 +353,21 @@
               <span id="rebalanceOcrProgressBar"></span>
             </div>
           </details>
+          <section
+            id="holdingAllocation"
+            class="holding-allocation"
+            aria-labelledby="holdingAllocationTitle"
+            hidden
+          >
+            <div class="holding-allocation-head">
+              <h3 id="holdingAllocationTitle">持股比例</h3>
+              <div class="allocation-toggle" aria-label="持股比例計算方式">
+                <button type="button" data-allocation-mode="cost">成本</button>
+                <button type="button" data-allocation-mode="market" class="active">市值</button>
+              </div>
+            </div>
+            <div id="holdingAllocationContent"></div>
+          </section>
           <div id="rebalanceHoldings" class="rebalance-holdings"></div>
           <div id="rebalanceResults" class="rebalance-results"></div>
         </div>
@@ -505,7 +520,7 @@
     <script src="config.js?v=4.3"></script>
     <script src="buy-engine-v2.js?v=2.7"></script>
     <script src="app.js?v=5.0"></script>
-    <script src="rebalance.js?v=2.6"></script>
+    <script src="rebalance.js?v=2.7"></script>
     <script src="rebalance-ocr.js?v=1.9"></script>
   </body>
 </html>

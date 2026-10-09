@@ -8,7 +8,8 @@ const optional=n=>n===""||n==null?null:Number.isFinite(Number(n))?Number(n):null
 const cap=(n,a,b)=>Math.max(a,Math.min(b,n));
 const localizedHoldingNames={"00910":"第一金太空衛星"};
 const defaultHolding=()=>({identifier:"",symbol:"",name:"",shares:0,averageCost:0,costBasis:0,currentPrice:0,marketValue:0,profitAmount:0,profitPercent:0,assetType:"ETF",marketRegion:"TW",exposureGroup:"OTHER",leveraged:false,inArkToday:false,arkRank:null,daysOutOfArk:0,arkPresence5D:0,valueTag:"",heatingTag:"",periodReturns:null});
-let state={holdings:[],totalAssets:0,targetOverride:null,usRsi:null,usBias:null,usPercentile:null,usReturn:null,oddLot:C.optimizer.defaultOddLot,allowFullExit:C.optimizer.defaultFullExit},lastPlan=null,autoTarget=0,performanceLoading=false;
+let state={holdings:[],totalAssets:0,targetOverride:null,usRsi:null,usBias:null,usPercentile:null,usReturn:null,oddLot:C.optimizer.defaultOddLot,allowFullExit:C.optimizer.defaultFullExit},lastPlan=null,autoTarget=0,performanceLoading=false,allocationMode="market";
+const allocationColors=["#c8f23d","#6d63e8","#ef6384","#ff8a3d","#57dbc5","#a9adb3"];
 const api=window.ARKStrategyLab;
 
 // The sell engine returns an execution target in allocation percent, not currency.
@@ -19,6 +20,12 @@ function calculatePortfolioTotal(holdings,actualAllocation){
   const holdingValue=(holdings||[]).reduce((sum,h)=>sum+Math.max(0,finite(h.marketValue)||finite(h.shares)*finite(h.currentPrice)),0);
   const allocation=finite(actualAllocation);
   return allocation>0?holdingValue/(allocation/100):holdingValue;
+}
+function calculateHoldingAllocation(holdings,mode="market",visibleCount=5){
+  const key=mode==="cost"?"costBasis":"marketValue",items=(holdings||[]).map(h=>({symbol:String(h.symbol||""),name:String(h.name||h.symbol||"未命名"),value:Math.max(0,finite(h[key]))})).filter(h=>h.symbol&&h.value>0).sort((a,b)=>b.value-a.value),total=items.reduce((sum,item)=>sum+item.value,0);
+  if(!total)return {total:0,items:[]};
+  const visible=items.slice(0,visibleCount),rest=items.slice(visibleCount),grouped=rest.length?[...visible,{symbol:"OTHER",name:"其他",value:rest.reduce((sum,item)=>sum+item.value,0)}]:visible;
+  return {total,items:grouped.map(item=>({...item,percent:item.value/total*100}))};
 }
 function calculateUSMarketRegime(cnn,more={}){
   const band=C.usCnnBands.find(x=>cnn<=x.max)||C.usCnnBands.at(-1),u=C.usSignals;
@@ -229,7 +236,16 @@ function renderHoldingEditor(){
       <label>市場<select data-holding="${i}" data-field="marketRegion">${["TW","US","GLOBAL","OTHER"].map(x=>`<option ${h.marketRegion===x?"selected":""}>${x}</option>`).join("")}</select></label>
       <label>曝險群組<select data-holding="${i}" data-field="exposureGroup">${["TAIWAN_LARGE_CAP","TAIWAN_TECH","TAIWAN_FINANCIAL","US_TECH","US_SEMICONDUCTOR","US_BROAD_MARKET","GLOBAL_TECH","GLOBAL_THEME","OTHER"].map(x=>`<option ${h.exposureGroup===x?"selected":""}>${x}</option>`).join("")}</select></label>
       <label>資產類型<input data-holding="${i}" data-field="assetType" value="${safe(h.assetType)}"></label><label class="check"><input type="checkbox" data-holding="${i}" data-field="leveraged" ${h.leveraged?"checked":""}>槓桿標的</label><label class="check"><input type="checkbox" data-holding="${i}" data-field="inArkToday" ${h.inArkToday?"checked":""}>今日在 ARK</label>
-  </div></details></details><button type="button" class="rebalance-remove" data-remove-holding="${i}" aria-label="移除 ${safe(h.symbol||"此筆持股")}" title="移除此筆">×</button></div>`).join("")||`<p class="note">尚無持股。按「新增持股」後，只要輸入股票代號（或名稱）、持有股數與成本均價。</p>`;
+  </div></details></details><button type="button" class="rebalance-remove" data-remove-holding="${i}" aria-label="移除 ${safe(h.symbol||"此筆持股")}" title="移除此筆">×</button></div>`).join("")||`<p class="note">尚無持股。按「新增持股」後，只要輸入股票代號（或名稱）、持有股數與成本均價。</p>`;renderHoldingAllocation();
+}
+function renderHoldingAllocation(){
+  const section=$("holdingAllocation"),content=$("holdingAllocationContent"),data=calculateHoldingAllocation(state.holdings,allocationMode);section.hidden=!state.holdings.some(h=>h.symbol);
+  section.querySelectorAll("[data-allocation-mode]").forEach(button=>button.classList.toggle("active",button.dataset.allocationMode===allocationMode));
+  if(section.hidden)return;
+  if(!data.total){content.innerHTML=`<p class="note">${allocationMode==="market"?"正在取得行情，取得後會顯示市值比例。":"請先輸入持有成本。"}</p>`;return;}
+  let cursor=0;const stops=data.items.map((item,index)=>{const start=cursor;cursor+=item.percent;return `${allocationColors[index]} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;}).join(",");
+  const legend=data.items.map((item,index)=>`<li><i style="background:${allocationColors[index]}"></i><span><b>${safe(item.name)}</b><small>${item.symbol==="OTHER"?"":safe(item.symbol)}</small></span><strong>${item.percent.toFixed(2)}%</strong></li>`).join("");
+  content.innerHTML=`<div class="holding-allocation-body"><div class="allocation-donut" style="background:conic-gradient(${stops})" role="img" aria-label="${safe(allocationMode==="market"?"持股市值比例":"持股成本比例")}"><span>持股佔比</span></div><ul class="allocation-legend">${legend}</ul></div><p class="allocation-total">${allocationMode==="market"?"持股總市值":"持有總成本"} ${money(data.total)}</p>`;
 }
 function field(i,k,label,value,type="number",placeholder=""){return `<label>${label}<input data-holding="${i}" data-field="${k}" type="${type}" ${type==="number"?'step="any" min="0"':""} value="${safe(value??"")}" placeholder="${safe(placeholder)}"></label>`;}
 function calculatedField(label,value){return `<label>${label}<input type="text" value="${safe(Number(value||0).toLocaleString("zh-TW",{maximumFractionDigits:2}))}" readonly></label>`;}
@@ -294,6 +310,7 @@ function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push(
   test("成本均價可換算持有總成本",()=>{const x=calculateHoldingMetrics({shares:100,averageCost:150},200);return x.costBasis===15000&&x.marketValue===20000&&x.profitAmount===5000&&x.profitPercent===33.33;});
   test("00910 固定顯示中文名稱",()=>normalizedHolding({symbol:"00910",name:"First Financial Space Satellite ETF"}).name==="第一金太空衛星");
   test("總資產由持股市值與上方實際配置自動推算",()=>calculatePortfolioTotal([{marketValue:500000}],50)===1000000);
+  test("持股比例取前五大並將其餘合併",()=>{const rows=calculateHoldingAllocation(Array.from({length:7},(_,i)=>({symbol:String(i),name:String(i),marketValue:70-i*10})),"market");return rows.items.length===6&&rows.items.at(-1).name==="其他"&&Math.abs(rows.items.reduce((sum,item)=>sum+item.percent,0)-100)<.001;});
   const opt=optimizeSellShares(40000,scored,{oddLot:true,allowFullExit:false,regime:"RISK_OFF"});
   test("股數不超過庫存",()=>opt.soldHoldings.every(x=>x.sellShares<=x.shares));
   test("零股方案接近 40000",()=>Math.abs(opt.actualReduction-40000)<500);
@@ -302,6 +319,7 @@ function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push(
   return {passed:tests.filter(x=>x.ok).length,total:tests.length,tests};
 }
 function init(){loadState();const cached=loadPerformanceCache();if(cached?.items)applyPerformance(cached.items);renderHoldingEditor();renderRebalanceCalculator();
+  $("holdingAllocation").addEventListener("click",event=>{const button=event.target.closest("[data-allocation-mode]");if(!button)return;allocationMode=button.dataset.allocationMode;renderHoldingAllocation();});
   $("rebalanceAddHolding").addEventListener("click",()=>{if(state.holdings.length>=C.optimizer.maxHoldings)return;state.holdings.push(defaultHolding());saveState();renderHoldingEditor();});
   $("rebalanceHoldings").addEventListener("change",async e=>{const i=Number(e.target.dataset.holding),key=e.target.dataset.field;if(!key||!state.holdings[i])return;state.holdings[i][key]=e.target.type==="checkbox"?e.target.checked:e.target.type==="number"?finite(e.target.value):e.target.value;if(key==="identifier"){state.holdings[i].symbol="";state.holdings[i].name="";saveState();await resolveHoldingIdentifier(i,state.holdings[i].identifier);renderRebalanceCalculator();return;}if(key==="shares"||key==="averageCost")Object.assign(state.holdings[i],calculateHoldingMetrics(state.holdings[i],state.holdings[i].currentPrice));saveState();if(key==="shares"||key==="averageCost")renderHoldingEditor();renderRebalanceCalculator();});
   $("rebalanceHoldings").addEventListener("click",e=>{const b=e.target.closest("[data-remove-holding]");if(!b)return;state.holdings.splice(Number(b.dataset.removeHolding),1);saveState();renderHoldingEditor();renderRebalanceCalculator();});
@@ -309,7 +327,7 @@ function init(){loadState();const cached=loadPerformanceCache();if(cached?.items
   $("rebalanceSave").addEventListener("click",()=>{if(!lastPlan){$("rebalanceNotice").textContent="請先計算調節方案。";return;}saveRebalanceSnapshot(lastPlan);$("rebalanceNotice").textContent="已將本次方案與策略版本儲存於此裝置。";});
   // Existing engine is left untouched; observe completed renders.
   const observer=new MutationObserver(()=>renderRebalanceCalculator());observer.observe($("targetExecution"),{childList:true});
-  window.RebalanceCalculator={calculateTargetReduction,calculatePortfolioTotal,calculateUSMarketRegime,calculateTaiwanMarketRegime,calculateMarketSellFactor,calculateArkPersistence,calculateSingleConcentration,calculateExposureGroupConcentration,calculateProfitBuffer,calculateHoldingMetrics,calculatePerformanceScores,rankHoldingsByReturn,calculateSellPriority,generateSellReasons,allocateReductionAcrossMarkets,optimizeSellShares,generateAlternativePlans,saveRebalanceSnapshot,renderRebalanceCalculator,renderMarketRegime,renderSellPlan,renderSellExplanation,renderPerformanceComparison,runRebalanceSelfTests,buildPlan,importHoldingRows,refreshPerformance,resolveHoldingIdentifier};
+  window.RebalanceCalculator={calculateTargetReduction,calculatePortfolioTotal,calculateHoldingAllocation,calculateUSMarketRegime,calculateTaiwanMarketRegime,calculateMarketSellFactor,calculateArkPersistence,calculateSingleConcentration,calculateExposureGroupConcentration,calculateProfitBuffer,calculateHoldingMetrics,calculatePerformanceScores,rankHoldingsByReturn,calculateSellPriority,generateSellReasons,allocateReductionAcrossMarkets,optimizeSellShares,generateAlternativePlans,saveRebalanceSnapshot,renderRebalanceCalculator,renderMarketRegime,renderSellPlan,renderSellExplanation,renderPerformanceComparison,runRebalanceSelfTests,buildPlan,importHoldingRows,refreshPerformance,resolveHoldingIdentifier};
   const tests=runRebalanceSelfTests(),list=$("selfTestList");if(list){list.insertAdjacentHTML("beforeend",tests.tests.map(x=>`<li>${x.ok?"通過":"失敗"} · 調節：${safe(x.name)}</li>`).join(""));const counts=$("selfTestBadge").textContent.match(/(\d+)\s*\/\s*(\d+)/),old=Number(counts?.[1]||0),total=Number(counts?.[2]||0);$("selfTestBadge").textContent=`${old+tests.passed} / ${total+tests.total} 通過`;$("selfTestBadge").className=`badge ${old+tests.passed===total+tests.total?"buy":"sell"}`;}
 }
 document.addEventListener("DOMContentLoaded",init);
