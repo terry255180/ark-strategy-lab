@@ -272,10 +272,9 @@ async function refreshPerformance(force=false){
   catch(error){console.warn("ETF performance unavailable",error);}
   finally{performanceLoading=false;if(lastPlan)renderRebalanceCalculator();}
 }
-function readInputs(){const input=api.getInput();state.totalAssets=calculatePortfolioTotal(state.holdings,input.actualAllocation);state.targetOverride=null;state.usRsi=null;state.usBias=null;state.usPercentile=null;state.usReturn=null;state.oddLot=$("rebalanceOddLot").checked;state.allowFullExit=$("rebalanceFullExit").checked;saveState();}
+function readInputs(){const input=api.getInput();state.totalAssets=calculatePortfolioTotal(state.holdings,input.actualAllocation);state.targetOverride=null;state.usRsi=null;state.usBias=null;state.usPercentile=null;state.usReturn=null;state.oddLot=C.optimizer.defaultOddLot;state.allowFullExit=C.optimizer.defaultFullExit;saveState();}
 function loadState(){try{const saved=JSON.parse(localStorage.getItem(C.storageKeys.state)||"null");if(saved&&typeof saved==="object")state={...state,...saved,holdings:Array.isArray(saved.holdings)?saved.holdings.slice(0,C.optimizer.maxHoldings).map(normalizedHolding):[]};}catch{}
-  state.targetOverride=null;state.usRsi=null;state.usBias=null;state.usPercentile=null;state.usReturn=null;
-  $("rebalanceOddLot").checked=state.oddLot;$("rebalanceFullExit").checked=state.allowFullExit;}
+  state.targetOverride=null;state.usRsi=null;state.usBias=null;state.usPercentile=null;state.usReturn=null;state.oddLot=C.optimizer.defaultOddLot;state.allowFullExit=C.optimizer.defaultFullExit;}
 function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push({name,ok:Boolean(fn())});}catch{tests.push({name,ok:false});}};
   const tw={factor:1.2},us=calculateUSMarketRegime(33),markets={tw,us};const raw=[{...defaultHolding(),symbol:"00631L",marketValue:210300,shares:1000,currentPrice:210.3,profitPercent:40.34,leveraged:true,inArkToday:true,exposureGroup:"TAIWAN_LARGE_CAP"},{...defaultHolding(),symbol:"0050",marketValue:143000,shares:1000,currentPrice:143,profitPercent:27.86,inArkToday:true,exposureGroup:"TAIWAN_LARGE_CAP"},{...defaultHolding(),symbol:"006208",marketValue:128800,shares:1000,currentPrice:128.8,profitPercent:232.58,inArkToday:true,exposureGroup:"TAIWAN_LARGE_CAP"}];
   const context={holdings:raw,totalAssets:1000000,markets,regime:"RISK_OFF"},scored=raw.map(h=>calculateSellPriority(h,context));
@@ -301,7 +300,6 @@ function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push(
   return {passed:tests.filter(x=>x.ok).length,total:tests.length,tests};
 }
 function init(){loadState();const cached=loadPerformanceCache();if(cached?.items)applyPerformance(cached.items);renderHoldingEditor();renderRebalanceCalculator();
-  for(const id of ["rebalanceOddLot","rebalanceFullExit"])$(id).addEventListener("change",()=>{readInputs();renderRebalanceCalculator();});
   $("rebalanceAddHolding").addEventListener("click",()=>{if(state.holdings.length>=C.optimizer.maxHoldings)return;state.holdings.push(defaultHolding());saveState();renderHoldingEditor();});
   $("rebalanceHoldings").addEventListener("change",async e=>{const i=Number(e.target.dataset.holding),key=e.target.dataset.field;if(!key||!state.holdings[i])return;state.holdings[i][key]=e.target.type==="checkbox"?e.target.checked:e.target.type==="number"?finite(e.target.value):e.target.value;if(key==="identifier"){state.holdings[i].symbol="";state.holdings[i].name="";saveState();await resolveHoldingIdentifier(i,state.holdings[i].identifier);renderRebalanceCalculator();return;}if(key==="shares"||key==="averageCost")Object.assign(state.holdings[i],calculateHoldingMetrics(state.holdings[i],state.holdings[i].currentPrice));saveState();if(key==="shares"||key==="averageCost")renderHoldingEditor();renderRebalanceCalculator();});
   $("rebalanceHoldings").addEventListener("click",e=>{const b=e.target.closest("[data-remove-holding]");if(!b)return;state.holdings.splice(Number(b.dataset.removeHolding),1);saveState();renderHoldingEditor();renderRebalanceCalculator();});

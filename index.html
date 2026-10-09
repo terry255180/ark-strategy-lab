@@ -8,7 +8,7 @@
     />
     <meta name="color-scheme" content="dark" />
     <title>ARK Strategy Lab｜方舟策略實驗室</title>
-    <link rel="stylesheet" href="styles.css?v=3.5" />
+    <link rel="stylesheet" href="styles.css?v=3.6" />
   </head>
   <body>
     <header class="topbar">
@@ -277,24 +277,12 @@
               決策決定；本區只分配已決定的調節金額。</small
             ></span
           ><span class="collapsible-section-meta"
-            ><span class="badge warning">HEURISTIC · 未經回測最佳化</span
             ><i aria-hidden="true"></i
           ></span>
         </summary>
         <div class="collapsible-section-body">
           <div class="rebalance-switches">
-            <label
-              ><input
-                id="rebalanceOddLot"
-                type="checkbox"
-                checked
-              />允許台股零股</label
-            ><label
-              ><input
-                id="rebalanceFullExit"
-                type="checkbox"
-              />允許完整退出持股</label
-            ><button
+            <button
               id="rebalanceAddHolding"
               class="button secondary"
               type="button"
@@ -313,20 +301,20 @@
           <p id="rebalanceNotice" class="note" role="status">
             新增持股後，系統會自動取得行情並計算調節方案。
           </p>
-          <section
+          <details
             class="ocr-import rebalance-import"
             aria-labelledby="rebalanceOcrTitle"
           >
-            <div class="ocr-copy">
+            <summary class="ocr-copy">
               <div>
-                <h3 id="rebalanceOcrTitle">從持股庫存截圖匯入</h3>
+                <h3 id="rebalanceOcrTitle">持股庫存圖片辨識</h3>
                 <p>
                   一次選擇最多 4
                   張庫存明細截圖。Gemini AI 只辨識股票名稱、代號、持有股數與持有總成本；目前價格由行情服務取得，市值、損益與報酬率由系統計算。請核對辨識資料，缺漏資料不會自動補零。Gemini 無法使用時會改用本機 OCR。
                 </p>
               </div>
               <span class="badge buy">Gemini AI</span>
-            </div>
+            </summary>
             <div class="ocr-actions">
               <label class="vision-token-field"
                 >AI 辨識密碼<input
@@ -364,7 +352,7 @@
             <div id="rebalanceOcrProgress" class="ocr-progress" hidden>
               <span id="rebalanceOcrProgressBar"></span>
             </div>
-          </section>
+          </details>
           <div id="rebalanceHoldings" class="rebalance-holdings"></div>
           <div id="rebalanceResults" class="rebalance-results"></div>
         </div>
@@ -517,7 +505,7 @@
     <script src="config.js?v=4.3"></script>
     <script src="buy-engine-v2.js?v=2.7"></script>
     <script src="app.js?v=5.0"></script>
-    <script src="rebalance.js?v=2.4"></script>
+    <script src="rebalance.js?v=2.5"></script>
     <script src="rebalance-ocr.js?v=1.8"></script>
   </body>
 </html>
