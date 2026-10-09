@@ -18,6 +18,7 @@
 
 - `POST /api/vision`：Gemini ETF 清單與持股截圖辨識。
 - `GET /api/returns?symbols=0050,0052`：Yahoo 最新價格與今年至今、1 年、3 年報酬。
+- `GET /api/search?q=台積電`：以台股名稱或代號查詢正式代號。
 
 `GEMINI_API_KEY` 與 `VISION_ACCESS_TOKEN` 只能放在 Vercel Environment Variables，不可寫入 `config.js` 或提交到 GitHub。
 

@@ -4,6 +4,8 @@ const assert=require("node:assert/strict");
 const {normalizeArkItems,normalizeHoldingItems}=require("../lib/gemini");
 const {calculateReturns,normalizeSymbols}=require("../lib/yahoo");
 const returnsHandler=require("../api/returns");
+const searchHandler=require("../api/search");
+const {normalizeQuote}=searchHandler;
 const visionHandler=require("../api/vision");
 
 function responseRecorder(){return {statusCode:200,headers:{},payload:null,status(code){this.statusCode=code;return this;},setHeader(key,value){this.headers[key]=value;return this;},json(payload){this.payload=payload;return this;}};}
@@ -28,6 +30,13 @@ test("Yahoo 報酬結果包含最新價格與三段期間",()=>{
 });
 
 test("代號清理會去重並排除無效內容",()=>assert.deepEqual(normalizeSymbols("0050,0050,abc,00631L"),["0050","00631L"]));
+
+test("Yahoo 台股搜尋結果會移除交易所尾碼",()=>assert.deepEqual(normalizeQuote({symbol:"2330.TW",longname:"台灣積體電路製造股份有限公司",quoteType:"EQUITY"}),{symbol:"2330",name:"台灣積體電路製造股份有限公司",exchangeSuffix:"TW",marketRegion:"TW",assetType:"STOCK"}));
+
+test("股票名稱可經 search API 找到台股代號",async()=>{
+  const originalFetch=global.fetch;global.fetch=async()=>({ok:true,json:async()=>({quotes:[{symbol:"2330.TW",longname:"台灣積體電路製造股份有限公司"}]})});
+  try{const res=responseRecorder();await searchHandler({method:"GET",query:{q:"台積電"}},res);assert.equal(res.statusCode,200);assert.equal(res.payload.item.symbol,"2330");}finally{global.fetch=originalFetch;}
+});
 
 test("returns API 可取得並回傳行情",async()=>{
   const originalFetch=global.fetch;global.fetch=async()=>({ok:true,json:async()=>yahooFixture()});

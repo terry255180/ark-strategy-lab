@@ -64,6 +64,7 @@ window.CONFIG = Object.freeze({
     requireUserConfirmation: true,
   }),
   performanceEndpoint: "/api/returns",
+  securitySearchEndpoint: "/api/search",
   rebalance: {
     strategyVersion: "REBALANCE_V1.0",
     status: "HEURISTIC · NOT BACKTEST OPTIMIZED",
