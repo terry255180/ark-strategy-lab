@@ -35,6 +35,11 @@ test("Yahoo 台股搜尋結果會移除交易所尾碼",()=>assert.deepEqual(nor
 
 test("已知 ETF 優先顯示中文名稱",()=>assert.equal(normalizeQuote({symbol:"0050.TW",longname:"Yuanta/P-shares Taiwan Top 50 ETF",quoteType:"ETF"}).name,"元大台灣50"));
 
+test("00910 搜尋與持股辨識皆顯示中文名稱",()=>{
+  assert.equal(normalizeQuote({symbol:"00910.TW",longname:"First Financial Space Satellite ETF",quoteType:"ETF"}).name,"第一金太空衛星");
+  assert.equal(normalizeHoldingItems([{symbol:"00910",name:"First Financial Space Satellite ETF",shares:100,costBasis:2000}])[0].name,"第一金太空衛星");
+});
+
 test("股票名稱可經 search API 找到台股代號",async()=>{
   const originalFetch=global.fetch;global.fetch=async()=>({ok:true,json:async()=>({quotes:[{symbol:"2330.TW",longname:"台灣積體電路製造股份有限公司"}]})});
   try{const res=responseRecorder();await searchHandler({method:"GET",query:{q:"台積電"}},res);assert.equal(res.statusCode,200);assert.equal(res.payload.item.symbol,"2330");}finally{global.fetch=originalFetch;}

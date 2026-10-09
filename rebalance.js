@@ -6,6 +6,7 @@ const safe=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"
 const finite=n=>Number.isFinite(Number(n))?Number(n):0;
 const optional=n=>n===""||n==null?null:Number.isFinite(Number(n))?Number(n):null;
 const cap=(n,a,b)=>Math.max(a,Math.min(b,n));
+const localizedHoldingNames={"00910":"第一金太空衛星"};
 const defaultHolding=()=>({identifier:"",symbol:"",name:"",shares:0,averageCost:0,costBasis:0,currentPrice:0,marketValue:0,profitAmount:0,profitPercent:0,assetType:"ETF",marketRegion:"TW",exposureGroup:"OTHER",leveraged:false,inArkToday:false,arkRank:null,daysOutOfArk:0,arkPresence5D:0,valueTag:"",heatingTag:"",periodReturns:null});
 let state={holdings:[],totalAssets:0,targetOverride:null,usRsi:null,usBias:null,usPercentile:null,usReturn:null,oddLot:C.optimizer.defaultOddLot,allowFullExit:C.optimizer.defaultFullExit},lastPlan=null,autoTarget=0,performanceLoading=false;
 const api=window.ARKStrategyLab;
@@ -137,7 +138,7 @@ function calculateHoldingMetrics(holding,latestPrice){
   const profitPercent=costBasis>0?Math.round(profitAmount/costBasis*10000)/100:0;
   return {shares,averageCost,costBasis,currentPrice:price,marketValue,profitAmount,profitPercent};
 }
-function normalizedHolding(h){const x={...defaultHolding(),...h};for(const k of ["marketValue","shares","averageCost","costBasis","currentPrice","profitAmount","profitPercent","arkRank","daysOutOfArk","arkPresence5D"])x[k]=optional(x[k])??0;Object.assign(x,calculateHoldingMetrics(x,x.currentPrice));x.identifier=String(x.identifier||x.symbol||x.name||"");x.leveraged=Boolean(x.leveraged);x.inArkToday=Boolean(x.inArkToday);return x;}
+function normalizedHolding(h){const x={...defaultHolding(),...h};for(const k of ["marketValue","shares","averageCost","costBasis","currentPrice","profitAmount","profitPercent","arkRank","daysOutOfArk","arkPresence5D"])x[k]=optional(x[k])??0;Object.assign(x,calculateHoldingMetrics(x,x.currentPrice));x.identifier=String(x.identifier||x.symbol||x.name||"");x.name=localizedHoldingNames[String(x.symbol).toUpperCase()]||x.name;x.leveraged=Boolean(x.leveraged);x.inArkToday=Boolean(x.inArkToday);return x;}
 function eligibleShares(h,options){
   const shares=Math.max(0,Math.floor(finite(h.shares))),lot=h.marketRegion==="TW"&&!options.oddLot?1000:1;
   let max=Math.floor(shares/lot)*lot;
@@ -243,7 +244,7 @@ async function resolveHoldingIdentifier(index,query){
     if(!item){const url=new URL(endpoint,location.href);url.searchParams.set("q",raw);const response=await fetch(url,{cache:"no-store"}),data=await response.json();if(!response.ok||!data.ok||!data.item)throw new Error(data.error||`HTTP ${response.status}`);item=data.item;}
     if(state.holdings[index]!==holding||String(holding.identifier).trim()!==raw)return;
     const metadata=(window.currentETFs||[]).find(etf=>String(etf.symbol||"").toUpperCase()===String(item.symbol).toUpperCase());
-    Object.assign(holding,{symbol:String(item.symbol||"").toUpperCase(),name:item.name||metadata?.name||item.symbol,marketRegion:metadata?.marketRegion||item.marketRegion||"TW",exposureGroup:metadata?.exposureGroup||holding.exposureGroup,assetType:metadata?.assetType||item.assetType||holding.assetType,leveraged:Boolean(metadata?.leverage>1||metadata?.assetType==="LEVERAGED_TW"||holding.leveraged),periodReturns:null,currentPrice:0,marketValue:0,profitAmount:0,profitPercent:0});
+    Object.assign(holding,{symbol:String(item.symbol||"").toUpperCase(),name:localizedHoldingNames[String(item.symbol||"").toUpperCase()]||item.name||metadata?.name||item.symbol,marketRegion:metadata?.marketRegion||item.marketRegion||"TW",exposureGroup:metadata?.exposureGroup||holding.exposureGroup,assetType:metadata?.assetType||item.assetType||holding.assetType,leveraged:Boolean(metadata?.leverage>1||metadata?.assetType==="LEVERAGED_TW"||holding.leveraged),periodReturns:null,currentPrice:0,marketValue:0,profitAmount:0,profitPercent:0});
     saveState();renderHoldingEditor();await refreshPerformance(true);
     $("rebalanceNotice").textContent=`已找到 ${holding.symbol} ${holding.name}，並以最近交易日收盤價自動計算。`;
   }catch(error){holding.symbol="";holding.name="";holding.currentPrice=0;Object.assign(holding,calculateHoldingMetrics(holding,0));saveState();renderHoldingEditor();$("rebalanceNotice").textContent=`找不到「${raw}」：${String(error?.message||error)} 請改用股票代號。`;}
@@ -260,7 +261,7 @@ function importHoldingRows(rows){
 }
 function saveState(){localStorage.setItem(C.storageKeys.state,JSON.stringify(state));}
 function loadPerformanceCache(){try{return JSON.parse(localStorage.getItem(C.storageKeys.performance)||"null");}catch{return null;}}
-function applyPerformance(items){const map=new Map((items||[]).map(item=>[String(item.symbol||"").toUpperCase(),item]));state.holdings=state.holdings.map(h=>{const quote=map.get(String(h.symbol).toUpperCase()),periodReturns=quote||h.periodReturns||null;return {...h,...(quote?.name?{name:quote.name}:{}),...calculateHoldingMetrics(h,quote?.latestPrice??h.currentPrice),periodReturns};});saveState();renderHoldingEditor();if(lastPlan)renderRebalanceCalculator();}
+function applyPerformance(items){const map=new Map((items||[]).map(item=>[String(item.symbol||"").toUpperCase(),item]));state.holdings=state.holdings.map(h=>{const symbol=String(h.symbol).toUpperCase(),quote=map.get(symbol),periodReturns=quote||h.periodReturns||null,name=localizedHoldingNames[symbol]||quote?.name;return {...h,...(name?{name}:{}),...calculateHoldingMetrics(h,quote?.latestPrice??h.currentPrice),periodReturns};});saveState();renderHoldingEditor();if(lastPlan)renderRebalanceCalculator();}
 async function refreshPerformance(force=false){
   const symbols=[...new Set(state.holdings.map(h=>String(h.symbol||"").toUpperCase()).filter(Boolean))];if(!symbols.length||!C.performance?.enabled)return;
   const cached=loadPerformanceCache(),maxAge=(C.performance.cacheHours||12)*3600000;
@@ -291,6 +292,7 @@ function runRebalanceSelfTests(){const tests=[],test=(name,fn)=>{try{tests.push(
   test("今年、1年、3年報酬各自獨立排名",()=>rankHoldingsByReturn(ranked,"ytd")[0].symbol==="A"&&rankHoldingsByReturn(ranked,"oneYear")[0].symbol==="B"&&rankHoldingsByReturn(ranked,"threeYear")[0].symbol==="B");
   test("價格、股數與成本可計算市值損益報酬",()=>{const x=calculateHoldingMetrics({shares:100,costBasis:15000},200);return x.marketValue===20000&&x.profitAmount===5000&&x.profitPercent===33.33;});
   test("成本均價可換算持有總成本",()=>{const x=calculateHoldingMetrics({shares:100,averageCost:150},200);return x.costBasis===15000&&x.marketValue===20000&&x.profitAmount===5000&&x.profitPercent===33.33;});
+  test("00910 固定顯示中文名稱",()=>normalizedHolding({symbol:"00910",name:"First Financial Space Satellite ETF"}).name==="第一金太空衛星");
   test("總資產由持股市值與上方實際配置自動推算",()=>calculatePortfolioTotal([{marketValue:500000}],50)===1000000);
   const opt=optimizeSellShares(40000,scored,{oddLot:true,allowFullExit:false,regime:"RISK_OFF"});
   test("股數不超過庫存",()=>opt.soldHoldings.every(x=>x.sellShares<=x.shares));
