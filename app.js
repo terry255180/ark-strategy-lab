@@ -2090,7 +2090,7 @@ function buildAllocationSummary(d, input, market = {}) {
     else if (fallingConfirmed)
       actionText = `ARK 趨勢仍弱，本次以 ${multiplier.toFixed(2)} 倍減速布局`;
     else actionText = `本次依 ${multiplier.toFixed(2)} 倍位階股數分批布局`;
-    return `目前持倉 ${actual.toFixed(2)}% 低於 ARK ${target.toFixed(2)}%，缺口 ${gap.toFixed(2)}%，屬於${size}。${trendContext} ${marketContext} 結論：${actionText}，不建議為追上目標一次買滿；後續只在 ARK 續升或缺口仍大時逐批補足。`;
+    return `目前持倉 ${actual.toFixed(2)}% 低於 ARK ${target.toFixed(2)}%，缺口 ${gap.toFixed(2)}%，屬於${size}。${trendContext} ${marketContext} 結論：${actionText}，一般行情最高 3 倍，且每日投入不超過推算總資產的 ${CONFIG.maxDailyBuyPercent.toFixed(0)}%；只有極端機會模式才開放 5 倍。不建議為追上目標一次買滿；後續只在 ARK 續升或缺口仍大時逐批補足。`;
   }
   const size =
     absoluteGap > 5 ? "明顯超配" : absoluteGap > 2 ? "中度超配" : "輕微超配";
@@ -2887,16 +2887,37 @@ function applyArkWaterLevelMultiplierPolicy(plan, input, d) {
       0,
       1,
     );
-    const smallGap = d.gap > CONFIG.deadBand && d.gap <= CONFIG.buyWatchMaxGap,
-      highScale = smallGap ? 2 + 3 * progress : 2 + progress;
+    const highScale = 2 + progress;
     scale = Math.max(scale, round(highScale, 2));
-    policy = smallGap
-      ? "HIGH_RISING_SMALL_GAP_TO_FIVE_X"
-      : "HIGH_RISING_ACCELERATE";
+    policy = "HIGH_RISING_ACCELERATE";
   }
+  const extremeMode = plan.buyMode === "EXTREME_DEPLOYMENT",
+    multiplierCap = extremeMode
+      ? CONFIG.maxBuyMultiplier
+      : CONFIG.maxStandardBuyMultiplier,
+    gap = Math.max(0, Number(d.gap || 0)),
+    suggestedCapital = Math.max(0, Number(input.arkSuggestedCapital || 0)),
+    dailyCapitalLimit =
+      gap > 0
+        ? suggestedCapital * Math.min(1, CONFIG.maxDailyBuyPercent / gap)
+        : 0,
+    capitalScaleCap =
+      dailyCapitalLimit > 0 && plan.arkBaseTotal > 0
+        ? dailyCapitalLimit / plan.arkBaseTotal
+        : multiplierCap;
+  scale = Math.min(scale, multiplierCap, capitalScaleCap);
+  if (!extremeMode && Number(plan.dynamicScale || 0) > multiplierCap)
+    policy = "STANDARD_MAX_THREE_X";
+  if (capitalScaleCap < multiplierCap && capitalScaleCap < scale + 0.005)
+    policy = "DAILY_CAP_TWO_PERCENT";
   return {
     ...plan,
-    dynamicScale: round(clamp(scale, 0, CONFIG.maxBuyMultiplier), 2),
+    dynamicScale: Math.floor(clamp(scale, 0, multiplierCap) * 100) / 100,
+    dailyCapitalLimit: round(dailyCapitalLimit, 2),
+    targetGapFillPercent: Math.min(
+      Number(plan.targetGapFillPercent || 0),
+      CONFIG.maxDailyBuyPercent,
+    ),
     waterLevelMultiplierPolicy: policy,
   };
 }
@@ -3672,7 +3693,7 @@ function runSelfTests() {
       ).dynamicScale === 3
     );
   });
-  test("ARK前10%高水位續升且缺口小可逐步提高至5倍", () => {
+  test("一般行情即使高水位續升也不超過3倍", () => {
     const input = {
         todayArk: 87.4,
         actualAllocation: 84.4,
@@ -3694,8 +3715,61 @@ function runSelfTests() {
         { dynamicScale: 1, arkBaseTotal: 1000 },
         input,
         d,
+      ).dynamicScale === 3
+    );
+  });
+  test("只有極端機會模式可使用5倍", () => {
+    const input = {
+        todayArk: 87.4,
+        actualAllocation: 84.4,
+        arkSuggestedCapital: 10000,
+      },
+      d = {
+        action: "BUY",
+        gap: 3,
+        trend: { delta1D: 1 },
+        waterLevelState: {
+          zone: "HIGH",
+          direction: "RISING",
+          value: 87.4,
+          levels: CONFIG.arkWaterLevels,
+        },
+      };
+    return (
+      applyArkWaterLevelMultiplierPolicy(
+        {
+          dynamicScale: 5,
+          arkBaseTotal: 1000,
+          buyMode: "EXTREME_DEPLOYMENT",
+        },
+        input,
+        d,
       ).dynamicScale === 5
     );
+  });
+  test("每日買進金額不超過推算總資產2%", () => {
+    const input = {
+        todayArk: 76,
+        actualAllocation: 64,
+        arkSuggestedCapital: 120000,
+      },
+      d = {
+        action: "BUY",
+        gap: 12,
+        trend: { delta1D: 3 },
+        waterLevelState: {
+          zone: "NORMAL",
+          direction: "RISING",
+          value: 76,
+          levels: CONFIG.arkWaterLevels,
+        },
+      },
+      plan = applyArkWaterLevelMultiplierPolicy(
+        { dynamicScale: 5, arkBaseTotal: 10000, buyMode: "ACCELERATED" },
+        input,
+        d,
+      );
+    return plan.dynamicScale === 2 && plan.dailyCapitalLimit === 20000;
   });
   test("±1%無動作區間不因高水位放大倍率", () => {
     const input = {
