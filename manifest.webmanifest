@@ -1,0 +1,16 @@
+{
+  "name": "ARK Strategy Lab｜方舟策略實驗室",
+  "short_name": "方舟策略",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050505",
+  "theme_color": "#050505",
+  "icons": [
+    {
+      "src": "/public/icons/ark-strategy-icon.jpg?v=1",
+      "sizes": "1254x1254",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}
