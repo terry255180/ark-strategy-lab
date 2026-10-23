@@ -2131,13 +2131,17 @@ function analyzeSimilarTrend(records, year = new Date().getFullYear()) {
   }
   if (selected.length < 3) return null;
   const change = (to, from) => (from ? (to / from - 1) * 100 : 0),
+    currentRisk = current.at(-1).arkAllocation,
     withForecast = selected.map((candidate) => {
       const matchEnd = candidate.segment[4],
         nearFuture = candidate.segment[9],
         farFuture = candidate.segment[14],
         marketPath = candidate.segment
           .slice(4)
-          .map((row) => change(row.taiwanIndex, matchEnd.taiwanIndex));
+          .map((row) => change(row.taiwanIndex, matchEnd.taiwanIndex)),
+        riskPath = candidate.segment
+          .slice(4)
+          .map((row) => currentRisk + row.arkAllocation - matchEnd.arkAllocation);
       return {
         ...candidate,
         similarity: clamp(100 - candidate.score * 30, 0, 100),
@@ -2145,6 +2149,7 @@ function analyzeSimilarTrend(records, year = new Date().getFullYear()) {
         matchEndDate: matchEnd.date,
         endDate: farFuture.date,
         marketPath,
+        riskPath,
         forecast: {
           risk5: nearFuture.arkAllocation - matchEnd.arkAllocation,
           risk10: farFuture.arkAllocation - matchEnd.arkAllocation,
@@ -2179,6 +2184,16 @@ function analyzeSimilarTrend(records, year = new Date().getFullYear()) {
       market10: horizonStats("market10"),
       risk5Average: average(withForecast.map((item) => item.forecast.risk5)),
       risk10Average: average(withForecast.map((item) => item.forecast.risk10)),
+      reaches85Rate:
+        (withForecast.filter((item) => Math.max(...item.riskPath) >= 85).length /
+          withForecast.length) *
+        100,
+      divergenceRate:
+        (withForecast.filter(
+          (item) => item.forecast.risk10 > 0 && item.forecast.market10 < 0,
+        ).length /
+          withForecast.length) *
+        100,
     },
     scenarios: {
       pessimistic: sortedPaths[0],
@@ -2249,8 +2264,44 @@ function renderSimilarScenarioChart(result) {
       .join(""),
     dayLabels = [0, 5, 10]
       .map((day) => `<text x="${x(day)}" y="${height - 12}" text-anchor="middle">${day === 0 ? "相似點" : `後 ${day} 日`}</text>`)
-      .join("");
-  chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="相似案例後十日的樂觀中性悲觀累積報酬路徑"><defs><linearGradient id="scenario-optimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5bc0be" stop-opacity=".13"/><stop offset="1" stop-color="#5bc0be" stop-opacity="0"/></linearGradient><linearGradient id="scenario-neutral-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9b8afb" stop-opacity=".11"/><stop offset="1" stop-color="#9b8afb" stop-opacity="0"/></linearGradient><linearGradient id="scenario-pessimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e58a9c" stop-opacity=".1"/><stop offset="1" stop-color="#e58a9c" stop-opacity="0"/></linearGradient></defs><rect x="${left}" y="${top}" width="${plotWidth}" height="${plotHeight}" rx="8" class="scenario-plot-bg"/>${grid}${dividers}<line x1="${left}" y1="${zeroY}" x2="${width - right}" y2="${zeroY}" class="scenario-zero-line"/>${lines}${dayLabels}</svg>`;
+      .join(""),
+    riskHeight = 270,
+    riskTop = 28,
+    riskBottom = 44,
+    riskPlotHeight = riskHeight - riskTop - riskBottom,
+    riskValues = series.flatMap(([key]) => result.scenarios[key].riskPath),
+    riskMin = Math.min(...riskValues, 85),
+    riskMax = Math.max(...riskValues, 85),
+    riskPadding = Math.max((riskMax - riskMin) * 0.14, 1),
+    riskChartMin = riskMin - riskPadding,
+    riskChartMax = riskMax + riskPadding,
+    riskY = (value) =>
+      riskTop +
+      ((riskChartMax - value) * riskPlotHeight) / (riskChartMax - riskChartMin),
+    riskGrid = Array.from({ length: 5 }, (_, index) => {
+      const value = riskChartMax - (index * (riskChartMax - riskChartMin)) / 4,
+        gridY = riskY(value);
+      return `<line x1="${left}" y1="${gridY}" x2="${width - right}" y2="${gridY}" class="scenario-grid-line"/><text x="${left - 12}" y="${gridY + 4}" text-anchor="end">${value.toFixed(1)}%</text>`;
+    }).join(""),
+    riskLines = series
+      .map(([key, label, color, labelY]) => {
+        const pathValues = result.scenarios[key].riskPath,
+          points = pathValues.map((value, index) => [x(index), riskY(value)]),
+          path = smoothPath(points),
+          end = pathValues.at(-1),
+          endY = riskY(end),
+          dots = points
+            .map(([dotX, dotY], index) => `<circle cx="${dotX}" cy="${dotY}" r="${index === 10 ? 4.5 : 2.5}" fill="${color}" class="scenario-dot"/>`)
+            .join("");
+        return `<path d="${path}" fill="none" stroke="${color}" class="scenario-line"/>${dots}<path d="M ${x(10) + 6} ${endY} C ${x(10) + 34} ${endY}, ${width - right + 26} ${labelY}, ${width - right + 44} ${labelY}" fill="none" stroke="${color}" class="scenario-connector"/><g class="scenario-result"><rect x="${width - right + 44}" y="${labelY - 19}" width="122" height="38" rx="8" fill="${color}" stroke="${color}"/><text x="${width - right + 56}" y="${labelY - 3}" class="scenario-result-label">${label}</text><text x="${width - 24}" y="${labelY + 11}" text-anchor="end" class="scenario-result-value">${end.toFixed(1)}%</text></g>`;
+      })
+      .join(""),
+    riskDayLabels = [0, 5, 10]
+      .map((day) => `<text x="${x(day)}" y="${riskHeight - 10}" text-anchor="middle">${day === 0 ? "目前" : `後 ${day} 日`}</text>`)
+      .join(""),
+    marketSvg = `<h4>大盤累積報酬</h4><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="相似案例後十日的大盤累積報酬路徑"><defs><linearGradient id="scenario-optimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5bc0be" stop-opacity=".13"/><stop offset="1" stop-color="#5bc0be" stop-opacity="0"/></linearGradient><linearGradient id="scenario-neutral-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9b8afb" stop-opacity=".11"/><stop offset="1" stop-color="#9b8afb" stop-opacity="0"/></linearGradient><linearGradient id="scenario-pessimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e58a9c" stop-opacity=".1"/><stop offset="1" stop-color="#e58a9c" stop-opacity="0"/></linearGradient></defs><rect x="${left}" y="${top}" width="${plotWidth}" height="${plotHeight}" rx="8" class="scenario-plot-bg"/>${grid}${dividers}<line x1="${left}" y1="${zeroY}" x2="${width - right}" y2="${zeroY}" class="scenario-zero-line"/>${lines}${dayLabels}</svg>`,
+    riskSvg = `<h4>方舟風控水位（依目前水位投影）</h4><svg viewBox="0 0 ${width} ${riskHeight}" role="img" aria-label="相似案例後十日的方舟風控水位路徑"><rect x="${left}" y="${riskTop}" width="${plotWidth}" height="${riskPlotHeight}" rx="8" class="scenario-plot-bg"/>${riskGrid}${dividers.replaceAll(`y2="${height - bottom}"`, `y2="${riskHeight - riskBottom}"`).replaceAll(`y1="${top}"`, `y1="${riskTop}"`)}<line x1="${left}" y1="${riskY(85)}" x2="${width - right}" y2="${riskY(85)}" class="scenario-threshold-line"/><text x="${left + 8}" y="${riskY(85) - 7}" class="scenario-threshold-label">85% 觀察線</text>${riskLines}${riskDayLabels}</svg>`;
+  chart.innerHTML = marketSvg + riskSvg;
 }
 function renderSimilarTrendChart(result) {
   const chart = $("similarTrendChart");
@@ -2338,8 +2389,8 @@ function renderSimilarTrendAnalysis(input = getInput()) {
     s5 = result.stats.market5,
     s10 = result.stats.market10,
     majority = s10.upRate >= 60 ? "多數案例偏多" : s10.upRate <= 40 ? "多數案例偏空" : "案例方向分歧";
-  summary.textContent = `已選取 ${result.caseCount} 個互不重疊的相似區間。後 10 日上漲比例 ${s10.upRate.toFixed(0)}%，平均報酬 ${sign(s10.average)}，判讀為「${majority}」。最高相似案例為 ${result.startDate}～${result.matchEndDate}；統計是歷史情境，不代表未來保證。`;
-  phases.innerHTML = `<div class="similar-phase active"><span>上漲案例比例</span><strong>後 5 日 ${s5.upRate.toFixed(0)}% · 後 10 日 ${s10.upRate.toFixed(0)}%</strong><small>${result.caseCount} 個互不重疊案例</small></div><div class="similar-phase"><span>大盤報酬統計（後 10 日）</span><strong>平均 ${sign(s10.average)}</strong><small>最高 ${sign(s10.max)} · 最低 ${sign(s10.min)}</small></div><div class="similar-phase"><span>風控水位平均變化</span><strong>後 5 日 ${sign(result.stats.risk5Average, " 個百分點")}</strong><small>後 10 日 ${sign(result.stats.risk10Average, " 個百分點")}</small></div>`;
+  summary.textContent = `已選取 ${result.caseCount} 個互不重疊的相似區間。後 10 日上漲比例 ${s10.upRate.toFixed(0)}%，平均報酬 ${sign(s10.average)}，判讀為「${majority}」。風控曾升抵 85% 的案例占 ${result.stats.reaches85Rate.toFixed(0)}%，風控上升但大盤下跌的背離案例占 ${result.stats.divergenceRate.toFixed(0)}%。統計是歷史情境，不代表未來保證。`;
+  phases.innerHTML = `<div class="similar-phase active"><span>上漲案例比例</span><strong>後 5 日 ${s5.upRate.toFixed(0)}% · 後 10 日 ${s10.upRate.toFixed(0)}%</strong><small>${result.caseCount} 個互不重疊案例</small></div><div class="similar-phase"><span>大盤報酬統計（後 10 日）</span><strong>平均 ${sign(s10.average)}</strong><small>最高 ${sign(s10.max)} · 最低 ${sign(s10.min)}</small></div><div class="similar-phase"><span>風控水位情境</span><strong>升抵 85%：${result.stats.reaches85Rate.toFixed(0)}%</strong><small>後 10 日平均 ${sign(result.stats.risk10Average, " 個百分點")}</small></div><div class="similar-phase"><span>風控／大盤背離</span><strong>${result.stats.divergenceRate.toFixed(0)}% 案例</strong><small>風控上升、但大盤下跌</small></div>`;
   renderSimilarScenarioChart(result);
   renderSimilarTrendChart(result);
 }
