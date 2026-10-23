@@ -2199,9 +2199,9 @@ function renderSimilarScenarioChart(result) {
     plotWidth = width - left - right,
     plotHeight = height - top - bottom,
     series = [
-      ["optimistic", "樂觀", "#48d597", 72],
-      ["neutral", "中性", "#6aa9ff", 126],
-      ["pessimistic", "悲觀", "#ff667a", 180],
+      ["optimistic", "樂觀", "#5bc0be", 72],
+      ["neutral", "中性", "#9b8afb", 126],
+      ["pessimistic", "悲觀", "#e58a9c", 180],
     ],
     values = series.flatMap(([key]) => result.scenarios[key].marketPath),
     min = Math.min(0, ...values),
@@ -2250,7 +2250,7 @@ function renderSimilarScenarioChart(result) {
     dayLabels = [0, 5, 10]
       .map((day) => `<text x="${x(day)}" y="${height - 12}" text-anchor="middle">${day === 0 ? "相似點" : `後 ${day} 日`}</text>`)
       .join("");
-  chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="相似案例後十日的樂觀中性悲觀累積報酬路徑"><defs><linearGradient id="scenario-optimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#48d597" stop-opacity=".22"/><stop offset="1" stop-color="#48d597" stop-opacity="0"/></linearGradient><linearGradient id="scenario-neutral-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6aa9ff" stop-opacity=".18"/><stop offset="1" stop-color="#6aa9ff" stop-opacity="0"/></linearGradient><linearGradient id="scenario-pessimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff667a" stop-opacity=".15"/><stop offset="1" stop-color="#ff667a" stop-opacity="0"/></linearGradient><filter id="scenario-glow"><feGaussianBlur stdDeviation="2.2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><rect x="${left}" y="${top}" width="${plotWidth}" height="${plotHeight}" rx="8" class="scenario-plot-bg"/>${grid}${dividers}<line x1="${left}" y1="${zeroY}" x2="${width - right}" y2="${zeroY}" class="scenario-zero-line"/>${lines}${dayLabels}</svg>`;
+  chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="相似案例後十日的樂觀中性悲觀累積報酬路徑"><defs><linearGradient id="scenario-optimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5bc0be" stop-opacity=".13"/><stop offset="1" stop-color="#5bc0be" stop-opacity="0"/></linearGradient><linearGradient id="scenario-neutral-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9b8afb" stop-opacity=".11"/><stop offset="1" stop-color="#9b8afb" stop-opacity="0"/></linearGradient><linearGradient id="scenario-pessimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e58a9c" stop-opacity=".1"/><stop offset="1" stop-color="#e58a9c" stop-opacity="0"/></linearGradient></defs><rect x="${left}" y="${top}" width="${plotWidth}" height="${plotHeight}" rx="8" class="scenario-plot-bg"/>${grid}${dividers}<line x1="${left}" y1="${zeroY}" x2="${width - right}" y2="${zeroY}" class="scenario-zero-line"/>${lines}${dayLabels}</svg>`;
 }
 function renderSimilarTrendChart(result) {
   const chart = $("similarTrendChart");
