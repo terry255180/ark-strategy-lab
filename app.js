@@ -1964,14 +1964,21 @@ function recordsWithCurrentMarket(records, input) {
       ...row,
       arkAllocation: Number(row.arkAllocation),
       taiwanIndex: Number(row.taiwanIndex),
+      cnn: Number.isFinite(Number(row.cnn)) ? Number(row.cnn) : null,
     }));
   const currentIndex = Number(input?.currentTaiwanIndex),
-    todayArk = Number(input?.todayArk);
+    todayArk = Number(input?.todayArk),
+    currentCnn = Number(input?.cnn);
   if (!(currentIndex > 0) || !(todayArk > 0)) return merged;
   const date =
       $("decisionDate")?.value ||
       new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" }),
-    row = { date, arkAllocation: todayArk, taiwanIndex: currentIndex },
+    row = {
+      date,
+      arkAllocation: todayArk,
+      taiwanIndex: currentIndex,
+      ...(Number.isFinite(currentCnn) ? { cnn: currentCnn } : {}),
+    },
     existing = merged.findIndex((item) => String(item.date) === date);
   if (existing >= 0) merged[existing] = { ...merged[existing], ...row };
   else merged.push(row);
@@ -2056,6 +2063,150 @@ function renderSparkline(input = getInput()) {
   $("sparkline").innerHTML =
     `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="ARK 建議持股折線與台灣加權指數柱狀趨勢圖"><line class="grid" x1="${left}" y1="${top}" x2="${w - right}" y2="${top}"/><line class="grid" x1="${left}" y1="${top + plotH / 2}" x2="${w - right}" y2="${top + plotH / 2}"/><line class="grid" x1="${left}" y1="${h - bottom}" x2="${w - right}" y2="${h - bottom}"/>${bars}<polyline class="line" points="${arkPoints}"/>${dots}<text x="2" y="${top + 5}">${arkMax.toFixed(1)}%</text><text x="2" y="${h - bottom}">${arkMin.toFixed(1)}%</text><text x="${w - 2}" y="${top + 5}" text-anchor="end">${Math.round(indexMax).toLocaleString("zh-TW")}</text><text x="${w - 2}" y="${h - bottom}" text-anchor="end">${Math.round(indexMin).toLocaleString("zh-TW")}</text>${dateLabels}</svg>`;
 }
+function trendVector(rows, key) {
+  const values = rows.map((row) => Number(row[key])),
+    base = values[0];
+  if (!values.every(Number.isFinite) || !Number.isFinite(base)) return null;
+  if (key === "arkAllocation") return values.map((value) => (value - base) / 10);
+  if (key === "cnn") return values.map((value) => (value - base) / 30);
+  return base > 0 ? values.map((value) => ((value / base - 1) * 100) / 5) : null;
+}
+function trendRmse(left, right) {
+  if (!left || !right || left.length !== right.length) return Infinity;
+  return Math.sqrt(
+    left.reduce((sum, value, index) => sum + (value - right[index]) ** 2, 0) /
+      left.length,
+  );
+}
+function compareTrendWindows(current, candidate) {
+  const keys = ["arkAllocation", "cnn", "taiwanIndex"],
+    scores = Object.fromEntries(
+      keys.map((key) => [key, trendRmse(trendVector(current, key), trendVector(candidate, key))]),
+    );
+  return {
+    score:
+      scores.arkAllocation * 0.4 + scores.cnn * 0.3 + scores.taiwanIndex * 0.3,
+    scores,
+  };
+}
+function analyzeSimilarTrend(records, year = new Date().getFullYear()) {
+  const rows = (records || [])
+    .filter(
+      (row) =>
+        String(row?.date || "").startsWith(`${year}-`) &&
+        [row.arkAllocation, row.cnn, row.taiwanIndex].every(
+          (value) => value !== null && value !== "" && Number.isFinite(Number(value)),
+        ) &&
+        Number(row.taiwanIndex) > 0,
+    )
+    .map((row) => ({
+      ...row,
+      arkAllocation: Number(row.arkAllocation),
+      cnn: Number(row.cnn),
+      taiwanIndex: Number(row.taiwanIndex),
+    }))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  if (rows.length < 20) return null;
+  const current = rows.slice(-5),
+    history = rows.filter((row) => String(row.date) < String(current[0].date));
+  if (history.length < 15) return null;
+  let best = null;
+  for (let start = 0; start <= history.length - 15; start += 1) {
+    const segment = history.slice(start, start + 15);
+    for (let phaseIndex = 0; phaseIndex < 3; phaseIndex += 1) {
+      const comparison = compareTrendWindows(
+        current,
+        segment.slice(phaseIndex * 5, phaseIndex * 5 + 5),
+      );
+      if (!best || comparison.score < best.score)
+        best = { ...comparison, segment, current, phaseIndex };
+    }
+  }
+  if (!best || !Number.isFinite(best.score)) return null;
+  return {
+    ...best,
+    phase: ["前段", "中段", "後段"][best.phaseIndex],
+    similarity: clamp(100 - best.score * 30, 0, 100),
+    startDate: best.segment[0].date,
+    endDate: best.segment.at(-1).date,
+  };
+}
+function renderSimilarTrendChart(result) {
+  const chart = $("similarTrendChart");
+  if (!chart) return;
+  const width = 900,
+    height = 330,
+    left = 88,
+    right = 22,
+    top = 45,
+    rowHeight = 62,
+    gap = 30,
+    plotWidth = width - left - right,
+    x = (index) => left + (index * plotWidth) / 14,
+    metrics = [
+      ["arkAllocation", "風控水位", "#36d6e7"],
+      ["cnn", "CNN", "#f4b942"],
+      ["taiwanIndex", "大盤指數", "#6aa9ff"],
+    ];
+  const phaseWidth = plotWidth / 3,
+    backgrounds = [0, 1, 2]
+      .map(
+        (phase) =>
+          `<rect x="${left + phase * phaseWidth}" y="${top - 22}" width="${phaseWidth}" height="${height - top - 16}" class="phase-bg${phase === result.phaseIndex ? " active" : ""}"/><text x="${left + phase * phaseWidth + phaseWidth / 2}" y="${top - 7}" class="phase-label" text-anchor="middle">${["前段", "中段", "後段"][phase]}${phase === result.phaseIndex ? " · 目前" : ""}</text>`,
+      )
+      .join("");
+  const lines = metrics
+    .map(([key, label, color], metricIndex) => {
+      const historical = result.segment.map((row) => Number(row[key])),
+        current = result.current.map((row) => Number(row[key])),
+        all = [...historical, ...current],
+        min = Math.min(...all),
+        max = Math.max(...all),
+        range = max - min || 1,
+        rowTop = top + metricIndex * (rowHeight + gap),
+        y = (value) => rowTop + rowHeight - ((value - min) / range) * rowHeight,
+        historyPoints = historical.map((value, index) => `${x(index)},${y(value)}`).join(" "),
+        offset = result.phaseIndex * 5,
+        currentPoints = current.map((value, index) => `${x(offset + index)},${y(value)}`).join(" ");
+      return `<text x="8" y="${rowTop + rowHeight / 2}" class="metric-label">${label}</text><line x1="${left}" y1="${rowTop + rowHeight}" x2="${width - right}" y2="${rowTop + rowHeight}" class="similar-grid"/><polyline points="${historyPoints}" fill="none" stroke="${color}" class="history-line"/><polyline points="${currentPoints}" fill="none" stroke="${color}" class="current-line"/>`;
+    })
+    .join("");
+  chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="相似區間前段、中段、後段與目前趨勢疊合圖">${backgrounds}${lines}</svg>`;
+}
+function renderSimilarTrendAnalysis(input = getInput()) {
+  const summary = $("similarTrendSummary"),
+    phases = $("similarTrendPhases"),
+    badge = $("similarTrendBadge"),
+    chart = $("similarTrendChart");
+  if (!summary || !phases || !badge || !chart) return;
+  const decisionYear = Number(String($("decisionDate")?.value || "").slice(0, 4)) ||
+      new Date().getFullYear(),
+    records = recordsWithCurrentMarket(
+      window.centralRecords?.length ? window.centralRecords : SOURCE_RECORDS,
+      input,
+    ),
+    result = analyzeSimilarTrend(records, decisionYear);
+  if (!result) {
+    badge.textContent = "資料不足";
+    badge.className = "badge warning";
+    summary.textContent = `需要 ${decisionYear} 年至少 20 筆同時含風控水位、CNN 與大盤指數的交易日資料，才能比對完整 15 日區間。`;
+    phases.innerHTML = "";
+    chart.innerHTML = '<p class="note">同步更多每日資料後會自動產生圖表。</p>';
+    return;
+  }
+  badge.textContent = `${result.similarity.toFixed(0)}% 相似 · ${result.phase}`;
+  badge.className = "badge buy";
+  summary.textContent = `今年最相似的完整區間為 ${result.startDate}～${result.endDate}；目前近 5 日最接近其「${result.phase}」。綜合相似度 ${result.similarity.toFixed(1)}%。`;
+  const descriptions = ["趨勢形成", "方向延續與確認", "趨勢成熟或轉折觀察"];
+  phases.innerHTML = [0, 1, 2]
+    .map((phase) => {
+      const rows = result.segment.slice(phase * 5, phase * 5 + 5),
+        active = phase === result.phaseIndex;
+      return `<div class="similar-phase${active ? " active" : ""}"><span>${["前段", "中段", "後段"][phase]}</span><strong>${descriptions[phase]}</strong><small>${escapeHtml(rows[0].date)}～${escapeHtml(rows.at(-1).date)}</small>${active ? '<b>目前位置</b>' : ""}</div>`;
+    })
+    .join("");
+  renderSimilarTrendChart(result);
+}
 function decisionReasons(input, d) {
   const r = [],
     water = d.waterLevelState || arkWaterLevelState(input, d),
@@ -2077,7 +2228,7 @@ function decisionReasons(input, d) {
     );
   if (water.zone === "HIGH" && water.direction === "RISING")
     r.push(
-      `ARK 已進入今年前 10% 高水位（≥${levels.upperDecile}%）且持續上升，代表模型提高風險承擔；一般缺口最高 3 倍，1%～5% 小缺口可隨水位逐步提高至 5 倍以補足差距，這個區間不賣股票。`,
+      `ARK 已進入今年前 10% 高水位（≥${levels.upperDecile}%）且持續上升，代表模型提高風險承擔；一般行情最高 3 倍，只有極端機會模式才開放 5 倍，這個區間不賣股票。`,
     );
   else if (water.zone === "LOW" && water.direction === "FALLING")
     r.push(
@@ -3135,6 +3286,7 @@ function renderDashboard() {
   );
   renderBuyEngine(plan, input, d);
   renderSparkline(input);
+  renderSimilarTrendAnalysis(input);
   renderStrategyValidation();
   renderArkLevelRecords();
   renderETFExecution();
@@ -3670,6 +3822,20 @@ function runSelfTests() {
     );
     return latest?.date === "2026-10-23";
   });
+  test("相似趨勢可辨認目前位於完整區間中段", () => {
+    const historical = Array.from({ length: 15 }, (_, index) => ({
+        date: `2026-01-${String(index + 1).padStart(2, "0")}`,
+        arkAllocation: 60 + index * 1.2 + Math.sin(index) * 2,
+        cnn: 35 + index * 1.8 + Math.cos(index) * 3,
+        taiwanIndex: 18000 + index * 90 + Math.sin(index) * 120,
+      })),
+      current = historical.slice(5, 10).map((row, index) => ({
+        ...row,
+        date: `2026-10-${String(index + 1).padStart(2, "0")}`,
+      })),
+      result = analyzeSimilarTrend([...historical, ...current], 2026);
+    return result?.phase === "中段" && result.similarity > 99;
+  });
   test("當下大盤新高會進入市場位置判斷", () => {
     const date = $("decisionDate").value,
       rows = recordsWithCurrentMarket(
@@ -4169,6 +4335,8 @@ window.ARKStrategyLab = {
   evaluatePremiumCounterfactual,
   predictMarketPosition,
   recordsWithCurrentMarket,
+  compareTrendWindows,
+  analyzeSimilarTrend,
   quantile,
   getAnnualArkRecords,
   getAnnualArkLevelRecords,
