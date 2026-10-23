@@ -230,6 +230,63 @@ function applyCentralData(data) {
   return true;
 }
 
+function findLatestTradingRecord(records, todayDate) {
+  const today = String(todayDate || "").slice(0, 10);
+  return (records || [])
+    .filter(
+      (row) =>
+        row?.date &&
+        String(row.date).slice(0, 10) <= today &&
+        Number.isFinite(Number(row.arkAllocation)),
+    )
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .at(-1);
+}
+
+async function syncLatestTradingDayData() {
+  const button = $("syncLatestTradingDayBtn"),
+    today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
+  button.disabled = true;
+  button.textContent = "同步中…";
+  try {
+    const data = await syncCentralData(),
+      record = findLatestTradingRecord(
+        data?.records || window.centralRecords || [],
+        today,
+      );
+    if (!record) throw new Error("找不到最近開盤日資料。");
+    const setNumber = (id, value) => {
+      if (
+        value !== "" &&
+        value !== null &&
+        value !== undefined &&
+        Number.isFinite(Number(value))
+      )
+        $(id).value = Number(value);
+    };
+    setNumber("todayArk", record.arkAllocation);
+    setNumber("currentTaiwanIndex", record.taiwanIndex);
+    setNumber("actualAllocation", record.actualAllocation);
+    setNumber("arkSuggestedCapital", record.arkSuggestedCapital);
+    const recordDate = String(record.date).slice(0, 10);
+    $("decisionDate").value = recordDate;
+    $("decisionDateDisplay").textContent = recordDate.replaceAll("-", "/");
+    applyCentralData(data);
+    persistState();
+    renderDashboard();
+    const isToday = recordDate === today;
+    $("syncStatus").textContent = `${isToday ? "今日開盤資料" : "最近開盤日"} ${recordDate.replaceAll("-", "/")} · 已同步`;
+    $("saveMessage").textContent = isToday
+      ? "已同步今日開盤資料。"
+      : `今日尚無開盤資料，已自動套用最近開盤日 ${recordDate.replaceAll("-", "/")}。`;
+  } catch (error) {
+    $("saveMessage").textContent = `最近開盤資料同步失敗：${String(error?.message || error)}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = "同步最近開盤資料";
+  }
+}
+
 function getArkLookbackValues(records, todayDate) {
   const valid = (records || [])
       .filter((row) => row?.date && Number.isFinite(Number(row.arkAllocation)))
@@ -3602,6 +3659,17 @@ function runSelfTests() {
       values.fiveDaysAgo === 71
     );
   });
+  test("休市日會選擇最近一個開盤日資料", () => {
+    const latest = findLatestTradingRecord(
+      [
+        { date: "2026-10-22", arkAllocation: 70 },
+        { date: "2026-10-23", arkAllocation: 72 },
+        { date: "2026-10-26", arkAllocation: 73 },
+      ],
+      "2026-10-25",
+    );
+    return latest?.date === "2026-10-23";
+  });
   test("當下大盤新高會進入市場位置判斷", () => {
     const date = $("decisionDate").value,
       rows = recordsWithCurrentMarket(
@@ -4043,6 +4111,10 @@ function bind() {
   $("applyOcrBtn").addEventListener("click", applyOcrRows);
   $("saveBtn").addEventListener("click", () => saveDailySnapshot());
   $("syncBtn").addEventListener("click", () => syncCentralData());
+  $("syncLatestTradingDayBtn").addEventListener(
+    "click",
+    syncLatestTradingDayData,
+  );
 }
 async function init() {
   $("strategyVersion").textContent = CONFIG.strategyVersion;
@@ -4077,6 +4149,7 @@ async function init() {
 document.addEventListener("DOMContentLoaded", init);
 
 window.ARKStrategyLab = {
+  findLatestTradingRecord,
   getArkLookbackValues,
   calculateGap,
   calculateArkTrend,
