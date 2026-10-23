@@ -2191,41 +2191,66 @@ function renderSimilarScenarioChart(result) {
   const chart = $("similarTrendScenarioChart");
   if (!chart) return;
   const width = 900,
-    height = 250,
-    left = 58,
-    right = 24,
-    top = 32,
-    bottom = 42,
+    height = 300,
+    left = 68,
+    right = 178,
+    top = 52,
+    bottom = 48,
     plotWidth = width - left - right,
     plotHeight = height - top - bottom,
     series = [
-      ["optimistic", "樂觀", "#48d597"],
-      ["neutral", "中性", "#6aa9ff"],
-      ["pessimistic", "悲觀", "#ff667a"],
+      ["optimistic", "樂觀", "#48d597", 72],
+      ["neutral", "中性", "#6aa9ff", 126],
+      ["pessimistic", "悲觀", "#ff667a", 180],
     ],
     values = series.flatMap(([key]) => result.scenarios[key].marketPath),
     min = Math.min(0, ...values),
     max = Math.max(0, ...values),
-    padding = Math.max((max - min) * 0.12, 0.5),
+    padding = Math.max((max - min) * 0.18, 0.75),
     chartMin = min - padding,
     chartMax = max + padding,
     x = (index) => left + (index * plotWidth) / 10,
     y = (value) => top + ((chartMax - value) * plotHeight) / (chartMax - chartMin),
     zeroY = y(0),
+    smoothPath = (points) => {
+      if (points.length < 2) return "";
+      return points.slice(1).reduce((path, point, index) => {
+        const previous = points[index],
+          before = points[index - 1] || previous,
+          after = points[index + 2] || point,
+          control1X = previous[0] + (point[0] - before[0]) / 6,
+          control1Y = previous[1] + (point[1] - before[1]) / 6,
+          control2X = point[0] - (after[0] - previous[0]) / 6,
+          control2Y = point[1] - (after[1] - previous[1]) / 6;
+        return `${path} C ${control1X} ${control1Y}, ${control2X} ${control2Y}, ${point[0]} ${point[1]}`;
+      }, `M ${points[0][0]} ${points[0][1]}`);
+    },
+    grid = Array.from({ length: 5 }, (_, index) => {
+      const value = chartMax - (index * (chartMax - chartMin)) / 4,
+        gridY = y(value);
+      return `<line x1="${left}" y1="${gridY}" x2="${width - right}" y2="${gridY}" class="scenario-grid-line"/><text x="${left - 12}" y="${gridY + 4}" text-anchor="end">${value >= 0 ? "+" : ""}${value.toFixed(1)}%</text>`;
+    }).join(""),
+    dividers = [0, 5, 10]
+      .map((day) => `<line x1="${x(day)}" y1="${top}" x2="${x(day)}" y2="${height - bottom}" class="scenario-day-line"/>`)
+      .join(""),
     lines = series
-      .map(([key, label, color]) => {
+      .map(([key, label, color, labelY]) => {
         const scenario = result.scenarios[key],
-          points = scenario.marketPath
-            .map((value, index) => `${x(index)},${y(value)}`)
-            .join(" "),
-          end = scenario.marketPath.at(-1);
-        return `<polyline points="${points}" fill="none" stroke="${color}" class="scenario-line"/><circle cx="${x(10)}" cy="${y(end)}" r="4" fill="${color}"/><text x="${x(10) - 8}" y="${y(end) - 9}" text-anchor="end" class="scenario-value" fill="${color}">${label} ${end >= 0 ? "+" : ""}${end.toFixed(1)}%</text>`;
+          points = scenario.marketPath.map((value, index) => [x(index), y(value)]),
+          path = smoothPath(points),
+          end = scenario.marketPath.at(-1),
+          endY = y(end),
+          dots = points
+            .map(([dotX, dotY], index) => `<circle cx="${dotX}" cy="${dotY}" r="${index === 10 ? 4.5 : 2.5}" fill="${color}" class="scenario-dot"/>`)
+            .join(""),
+          area = `${path} L ${x(10)} ${zeroY} L ${x(0)} ${zeroY} Z`;
+        return `<path d="${area}" fill="url(#scenario-${key}-fill)" class="scenario-area"/><path d="${path}" fill="none" stroke="${color}" class="scenario-line"/>${dots}<path d="M ${x(10) + 6} ${endY} C ${x(10) + 34} ${endY}, ${width - right + 26} ${labelY}, ${width - right + 44} ${labelY}" fill="none" stroke="${color}" class="scenario-connector"/><g class="scenario-result"><rect x="${width - right + 44}" y="${labelY - 19}" width="122" height="38" rx="8" fill="${color}" stroke="${color}"/><text x="${width - right + 56}" y="${labelY - 3}" class="scenario-result-label">${label}</text><text x="${width - 24}" y="${labelY + 11}" text-anchor="end" class="scenario-result-value">${end >= 0 ? "+" : ""}${end.toFixed(1)}%</text></g>`;
       })
       .join(""),
     dayLabels = [0, 5, 10]
       .map((day) => `<text x="${x(day)}" y="${height - 12}" text-anchor="middle">${day === 0 ? "相似點" : `後 ${day} 日`}</text>`)
       .join("");
-  chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="相似案例後十日的樂觀中性悲觀累積報酬路徑"><line x1="${left}" y1="${zeroY}" x2="${width - right}" y2="${zeroY}" class="similar-grid"/><text x="${left - 8}" y="${zeroY + 4}" text-anchor="end">0%</text>${lines}${dayLabels}</svg>`;
+  chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="相似案例後十日的樂觀中性悲觀累積報酬路徑"><defs><linearGradient id="scenario-optimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#48d597" stop-opacity=".22"/><stop offset="1" stop-color="#48d597" stop-opacity="0"/></linearGradient><linearGradient id="scenario-neutral-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6aa9ff" stop-opacity=".18"/><stop offset="1" stop-color="#6aa9ff" stop-opacity="0"/></linearGradient><linearGradient id="scenario-pessimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff667a" stop-opacity=".15"/><stop offset="1" stop-color="#ff667a" stop-opacity="0"/></linearGradient><filter id="scenario-glow"><feGaussianBlur stdDeviation="2.2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><rect x="${left}" y="${top}" width="${plotWidth}" height="${plotHeight}" rx="8" class="scenario-plot-bg"/>${grid}${dividers}<line x1="${left}" y1="${zeroY}" x2="${width - right}" y2="${zeroY}" class="scenario-zero-line"/>${lines}${dayLabels}</svg>`;
 }
 function renderSimilarTrendChart(result) {
   const chart = $("similarTrendChart");
