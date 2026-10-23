@@ -2116,33 +2116,116 @@ function analyzeSimilarTrend(records, year = new Date().getFullYear()) {
   const current = rows.slice(-5),
     history = rows.filter((row) => String(row.date) < String(current[0].date));
   if (history.length < 15) return null;
-  let best = null;
+  const candidates = [];
   for (let start = 0; start <= history.length - 15; start += 1) {
     const segment = history.slice(start, start + 15);
     const comparison = compareTrendWindows(current, segment.slice(0, 5));
-    if (!best || comparison.score < best.score)
-      best = { ...comparison, segment, current };
+    if (Number.isFinite(comparison.score))
+      candidates.push({ ...comparison, segment, current, start });
   }
-  if (!best || !Number.isFinite(best.score)) return null;
-  const matchEnd = best.segment[4],
-    nearFuture = best.segment[9],
-    farFuture = best.segment[14],
-    change = (to, from) => (from ? ((to / from - 1) * 100) : 0);
+  const selected = [];
+  for (const candidate of candidates.sort((a, b) => a.score - b.score)) {
+    if (selected.every((item) => Math.abs(item.start - candidate.start) >= 15))
+      selected.push(candidate);
+    if (selected.length === 5) break;
+  }
+  if (selected.length < 3) return null;
+  const change = (to, from) => (from ? (to / from - 1) * 100 : 0),
+    withForecast = selected.map((candidate) => {
+      const matchEnd = candidate.segment[4],
+        nearFuture = candidate.segment[9],
+        farFuture = candidate.segment[14],
+        marketPath = candidate.segment
+          .slice(4)
+          .map((row) => change(row.taiwanIndex, matchEnd.taiwanIndex));
+      return {
+        ...candidate,
+        similarity: clamp(100 - candidate.score * 30, 0, 100),
+        startDate: candidate.segment[0].date,
+        matchEndDate: matchEnd.date,
+        endDate: farFuture.date,
+        marketPath,
+        forecast: {
+          risk5: nearFuture.arkAllocation - matchEnd.arkAllocation,
+          risk10: farFuture.arkAllocation - matchEnd.arkAllocation,
+          market5: change(nearFuture.taiwanIndex, matchEnd.taiwanIndex),
+          market10: change(farFuture.taiwanIndex, matchEnd.taiwanIndex),
+          cnn5: nearFuture.cnn - matchEnd.cnn,
+          cnn10: farFuture.cnn - matchEnd.cnn,
+        },
+      };
+    }),
+    average = (values) => values.reduce((sum, value) => sum + value, 0) / values.length,
+    horizonStats = (key) => {
+      const values = withForecast.map((item) => item.forecast[key]);
+      return {
+        upRate: (values.filter((value) => value > 0).length / values.length) * 100,
+        average: average(values),
+        max: Math.max(...values),
+        min: Math.min(...values),
+      };
+    },
+    sortedPaths = [...withForecast].sort(
+      (a, b) => a.forecast.market10 - b.forecast.market10,
+    ),
+    best = withForecast[0];
   return {
     ...best,
-    similarity: clamp(100 - best.score * 30, 0, 100),
-    startDate: best.segment[0].date,
-    endDate: best.segment.at(-1).date,
-    matchEndDate: matchEnd.date,
-    forecast: {
-      risk5: nearFuture.arkAllocation - matchEnd.arkAllocation,
-      risk10: farFuture.arkAllocation - matchEnd.arkAllocation,
-      market5: change(nearFuture.taiwanIndex, matchEnd.taiwanIndex),
-      market10: change(farFuture.taiwanIndex, matchEnd.taiwanIndex),
-      cnn5: nearFuture.cnn - matchEnd.cnn,
-      cnn10: farFuture.cnn - matchEnd.cnn,
+    cases: withForecast,
+    caseCount: withForecast.length,
+    averageSimilarity: average(withForecast.map((item) => item.similarity)),
+    stats: {
+      market5: horizonStats("market5"),
+      market10: horizonStats("market10"),
+      risk5Average: average(withForecast.map((item) => item.forecast.risk5)),
+      risk10Average: average(withForecast.map((item) => item.forecast.risk10)),
+    },
+    scenarios: {
+      pessimistic: sortedPaths[0],
+      neutral: sortedPaths[Math.floor(sortedPaths.length / 2)],
+      optimistic: sortedPaths.at(-1),
     },
   };
+}
+function renderSimilarScenarioChart(result) {
+  const chart = $("similarTrendScenarioChart");
+  if (!chart) return;
+  const width = 900,
+    height = 250,
+    left = 58,
+    right = 24,
+    top = 32,
+    bottom = 42,
+    plotWidth = width - left - right,
+    plotHeight = height - top - bottom,
+    series = [
+      ["optimistic", "樂觀", "#48d597"],
+      ["neutral", "中性", "#6aa9ff"],
+      ["pessimistic", "悲觀", "#ff667a"],
+    ],
+    values = series.flatMap(([key]) => result.scenarios[key].marketPath),
+    min = Math.min(0, ...values),
+    max = Math.max(0, ...values),
+    padding = Math.max((max - min) * 0.12, 0.5),
+    chartMin = min - padding,
+    chartMax = max + padding,
+    x = (index) => left + (index * plotWidth) / 10,
+    y = (value) => top + ((chartMax - value) * plotHeight) / (chartMax - chartMin),
+    zeroY = y(0),
+    lines = series
+      .map(([key, label, color]) => {
+        const scenario = result.scenarios[key],
+          points = scenario.marketPath
+            .map((value, index) => `${x(index)},${y(value)}`)
+            .join(" "),
+          end = scenario.marketPath.at(-1);
+        return `<polyline points="${points}" fill="none" stroke="${color}" class="scenario-line"/><circle cx="${x(10)}" cy="${y(end)}" r="4" fill="${color}"/><text x="${x(10) - 8}" y="${y(end) - 9}" text-anchor="end" class="scenario-value" fill="${color}">${label} ${end >= 0 ? "+" : ""}${end.toFixed(1)}%</text>`;
+      })
+      .join(""),
+    dayLabels = [0, 5, 10]
+      .map((day) => `<text x="${x(day)}" y="${height - 12}" text-anchor="middle">${day === 0 ? "相似點" : `後 ${day} 日`}</text>`)
+      .join("");
+  chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="相似案例後十日的樂觀中性悲觀累積報酬路徑"><line x1="${left}" y1="${zeroY}" x2="${width - right}" y2="${zeroY}" class="similar-grid"/><text x="${left - 8}" y="${zeroY + 4}" text-anchor="end">0%</text>${lines}${dayLabels}</svg>`;
 }
 function renderSimilarTrendChart(result) {
   const chart = $("similarTrendChart");
@@ -2205,8 +2288,9 @@ function renderSimilarTrendAnalysis(input = getInput()) {
   const summary = $("similarTrendSummary"),
     phases = $("similarTrendPhases"),
     badge = $("similarTrendBadge"),
-    chart = $("similarTrendChart");
-  if (!summary || !phases || !badge || !chart) return;
+    chart = $("similarTrendChart"),
+    scenarioChart = $("similarTrendScenarioChart");
+  if (!summary || !phases || !badge || !chart || !scenarioChart) return;
   const decisionYear = Number(String($("decisionDate")?.value || "").slice(0, 4)) ||
       new Date().getFullYear(),
     records = recordsWithCurrentMarket(
@@ -2217,23 +2301,21 @@ function renderSimilarTrendAnalysis(input = getInput()) {
   if (!result) {
     badge.textContent = "資料不足";
     badge.className = "badge warning";
-    summary.textContent = `需要 ${decisionYear} 年至少 20 筆同時含風控水位、CNN 與大盤指數的交易日資料，才能找出相似 5 日並觀察其後 10 日。`;
+    summary.textContent = `需要 ${decisionYear} 年至少 50 筆完整資料，並且至少找到 3 個互不重疊的相似區間，才能建立情境統計。`;
     phases.innerHTML = "";
+    scenarioChart.innerHTML = '<p class="note">目前沒有足夠的獨立案例可建立三種路徑。</p>';
     chart.innerHTML = '<p class="note">同步更多每日資料後會自動產生圖表。</p>';
     return;
   }
-  badge.textContent = `${result.similarity.toFixed(0)}% 相似`;
+  badge.textContent = `前 ${result.caseCount} 個案例 · 平均相似 ${result.averageSimilarity.toFixed(0)}%`;
   badge.className = "badge buy";
-  const sign = (value, suffix) => `${value >= 0 ? "+" : ""}${value.toFixed(1)}${suffix}`;
-  summary.textContent = `目前近 5 日最像 ${result.startDate}～${result.matchEndDate}（相似度 ${result.similarity.toFixed(1)}%）。該歷史情境後 5 日：風控 ${sign(result.forecast.risk5, " 個百分點")}、大盤 ${sign(result.forecast.market5, "%")}、CNN ${sign(result.forecast.cnn5, " 點")}；後 10 日：風控 ${sign(result.forecast.risk10, " 個百分點")}、大盤 ${sign(result.forecast.market10, "%")}、CNN ${sign(result.forecast.cnn10, " 點")}。這是歷史情境預判，不是保證。`;
-  const descriptions = ["目前比對位置", "歷史未來短線", "歷史未來延伸"];
-  phases.innerHTML = [0, 1, 2]
-    .map((phase) => {
-      const rows = result.segment.slice(phase * 5, phase * 5 + 5),
-        active = phase === 0;
-      return `<div class="similar-phase${active ? " active" : ""}"><span>${["相似 5 日", "後續 1–5 日", "後續 6–10 日"][phase]}</span><strong>${descriptions[phase]}</strong><small>${escapeHtml(rows[0].date)}～${escapeHtml(rows.at(-1).date)}</small>${active ? '<b>目前對齊</b>' : ""}</div>`;
-    })
-    .join("");
+  const sign = (value, suffix = "%") => `${value >= 0 ? "+" : ""}${value.toFixed(1)}${suffix}`,
+    s5 = result.stats.market5,
+    s10 = result.stats.market10,
+    majority = s10.upRate >= 60 ? "多數案例偏多" : s10.upRate <= 40 ? "多數案例偏空" : "案例方向分歧";
+  summary.textContent = `已選取 ${result.caseCount} 個互不重疊的相似區間。後 10 日上漲比例 ${s10.upRate.toFixed(0)}%，平均報酬 ${sign(s10.average)}，判讀為「${majority}」。最高相似案例為 ${result.startDate}～${result.matchEndDate}；統計是歷史情境，不代表未來保證。`;
+  phases.innerHTML = `<div class="similar-phase active"><span>上漲案例比例</span><strong>後 5 日 ${s5.upRate.toFixed(0)}% · 後 10 日 ${s10.upRate.toFixed(0)}%</strong><small>${result.caseCount} 個互不重疊案例</small></div><div class="similar-phase"><span>大盤報酬統計（後 10 日）</span><strong>平均 ${sign(s10.average)}</strong><small>最高 ${sign(s10.max)} · 最低 ${sign(s10.min)}</small></div><div class="similar-phase"><span>風控水位平均變化</span><strong>後 5 日 ${sign(result.stats.risk5Average, " 個百分點")}</strong><small>後 10 日 ${sign(result.stats.risk10Average, " 個百分點")}</small></div>`;
+  renderSimilarScenarioChart(result);
   renderSimilarTrendChart(result);
 }
 function decisionReasons(input, d) {
@@ -3852,22 +3934,28 @@ function runSelfTests() {
     return latest?.date === "2026-10-23";
   });
   test("相似趨勢會接出歷史相似點後十日走向", () => {
-    const historical = Array.from({ length: 15 }, (_, index) => ({
-        date: `2026-01-${String(index + 1).padStart(2, "0")}`,
-        arkAllocation: 60 + index * 1.2 + Math.sin(index) * 2,
-        cnn: 35 + index * 1.8 + Math.cos(index) * 3,
-        taiwanIndex: 18000 + index * 90 + Math.sin(index) * 120,
-      })),
+    const historical = Array.from({ length: 75 }, (_, index) => {
+        const day = index % 15,
+          month = Math.floor(index / 25) + 1,
+          monthDay = (index % 25) + 1;
+        return {
+          date: `2026-${String(month).padStart(2, "0")}-${String(monthDay).padStart(2, "0")}`,
+          arkAllocation: 60 + day * 1.2 + Math.sin(day) * 2,
+          cnn: 35 + day * 1.8 + Math.cos(day) * 3,
+          taiwanIndex: 18000 * 1.04 ** Math.floor(index / 15) + day * 90,
+        };
+      }),
       current = historical.slice(0, 5).map((row, index) => ({
         ...row,
         date: `2026-10-${String(index + 1).padStart(2, "0")}`,
       })),
       result = analyzeSimilarTrend([...historical, ...current], 2026);
     return (
-      result?.similarity > 99 &&
-      result.matchEndDate === "2026-01-05" &&
-      result.forecast.risk10 > 0 &&
-      result.forecast.market10 > 0
+      result?.caseCount === 5 &&
+      result.stats.market10.upRate === 100 &&
+      result.stats.market10.average > 0 &&
+      result.scenarios.optimistic.forecast.market10 >=
+        result.scenarios.pessimistic.forecast.market10
     );
   });
   test("當下大盤新高會進入市場位置判斷", () => {
