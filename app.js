@@ -2069,7 +2069,13 @@ function trendVector(rows, key) {
   if (!values.every(Number.isFinite) || !Number.isFinite(base)) return null;
   if (key === "arkAllocation") return values.map((value) => (value - base) / 10);
   if (key === "cnn") return values.map((value) => (value - base) / 30);
-  return base > 0 ? values.map((value) => ((value / base - 1) * 100) / 5) : null;
+  if (key === "taiwanIndex")
+    return values.map((value, index) =>
+      index && values[index - 1] > 0
+        ? ((value / values[index - 1] - 1) * 100) / 5
+        : 0,
+    );
+  return null;
 }
 function trendRmse(left, right) {
   if (!left || !right || left.length !== right.length) return Infinity;
@@ -2085,7 +2091,7 @@ function compareTrendWindows(current, candidate) {
     );
   return {
     score:
-      scores.arkAllocation * 0.4 + scores.cnn * 0.3 + scores.taiwanIndex * 0.3,
+      scores.arkAllocation * 0.6 + scores.taiwanIndex * 0.3 + scores.cnn * 0.1,
     scores,
   };
 }
@@ -2113,65 +2119,87 @@ function analyzeSimilarTrend(records, year = new Date().getFullYear()) {
   let best = null;
   for (let start = 0; start <= history.length - 15; start += 1) {
     const segment = history.slice(start, start + 15);
-    for (let phaseIndex = 0; phaseIndex < 3; phaseIndex += 1) {
-      const comparison = compareTrendWindows(
-        current,
-        segment.slice(phaseIndex * 5, phaseIndex * 5 + 5),
-      );
-      if (!best || comparison.score < best.score)
-        best = { ...comparison, segment, current, phaseIndex };
-    }
+    const comparison = compareTrendWindows(current, segment.slice(0, 5));
+    if (!best || comparison.score < best.score)
+      best = { ...comparison, segment, current };
   }
   if (!best || !Number.isFinite(best.score)) return null;
+  const matchEnd = best.segment[4],
+    nearFuture = best.segment[9],
+    farFuture = best.segment[14],
+    change = (to, from) => (from ? ((to / from - 1) * 100) : 0);
   return {
     ...best,
-    phase: ["前段", "中段", "後段"][best.phaseIndex],
     similarity: clamp(100 - best.score * 30, 0, 100),
     startDate: best.segment[0].date,
     endDate: best.segment.at(-1).date,
+    matchEndDate: matchEnd.date,
+    forecast: {
+      risk5: nearFuture.arkAllocation - matchEnd.arkAllocation,
+      risk10: farFuture.arkAllocation - matchEnd.arkAllocation,
+      market5: change(nearFuture.taiwanIndex, matchEnd.taiwanIndex),
+      market10: change(farFuture.taiwanIndex, matchEnd.taiwanIndex),
+      cnn5: nearFuture.cnn - matchEnd.cnn,
+      cnn10: farFuture.cnn - matchEnd.cnn,
+    },
   };
 }
 function renderSimilarTrendChart(result) {
   const chart = $("similarTrendChart");
   if (!chart) return;
   const width = 900,
-    height = 330,
-    left = 88,
-    right = 22,
-    top = 45,
-    rowHeight = 62,
-    gap = 30,
+    height = 500,
+    left = 100,
+    right = 34,
+    top = 58,
+    rowHeight = 100,
+    gap = 52,
     plotWidth = width - left - right,
     x = (index) => left + (index * plotWidth) / 14,
     metrics = [
-      ["arkAllocation", "風控水位", "#36d6e7"],
-      ["cnn", "CNN", "#f4b942"],
-      ["taiwanIndex", "大盤指數", "#6aa9ff"],
+      ["arkAllocation", "風控水位 %", "#36d6e7", (value) => `${value.toFixed(1)}%`],
+      ["marketReturn", "大盤日漲跌 %", "#6aa9ff", (value) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`],
+      ["cnn", "CNN 指數", "#f4b942", (value) => value.toFixed(0)],
     ];
-  const phaseWidth = plotWidth / 3,
+  const dailyReturns = (rows) =>
+      rows.map((row, index) =>
+        index && Number(rows[index - 1].taiwanIndex) > 0
+          ? (Number(row.taiwanIndex) / Number(rows[index - 1].taiwanIndex) - 1) * 100
+          : 0,
+      ),
+    phaseWidth = plotWidth / 3,
     backgrounds = [0, 1, 2]
-      .map(
-        (phase) =>
-          `<rect x="${left + phase * phaseWidth}" y="${top - 22}" width="${phaseWidth}" height="${height - top - 16}" class="phase-bg${phase === result.phaseIndex ? " active" : ""}"/><text x="${left + phase * phaseWidth + phaseWidth / 2}" y="${top - 7}" class="phase-label" text-anchor="middle">${["前段", "中段", "後段"][phase]}${phase === result.phaseIndex ? " · 目前" : ""}</text>`,
-      )
+      .map((phase) => `<rect x="${left + phase * phaseWidth}" y="25" width="${phaseWidth}" height="${height - 48}" class="phase-bg${phase ? " future" : " active"}"/><text x="${left + phase * phaseWidth + phaseWidth / 2}" y="42" class="phase-label" text-anchor="middle">${["歷史相似 5 日", "歷史後續 1–5 日", "歷史後續 6–10 日"][phase]}</text>`)
       .join("");
   const lines = metrics
-    .map(([key, label, color], metricIndex) => {
-      const historical = result.segment.map((row) => Number(row[key])),
-        current = result.current.map((row) => Number(row[key])),
+    .map(([key, label, color, format], metricIndex) => {
+      const historical = key === "marketReturn"
+          ? dailyReturns(result.segment)
+          : result.segment.map((row) => Number(row[key])),
+        current = key === "marketReturn"
+          ? dailyReturns(result.current)
+          : result.current.map((row) => Number(row[key])),
         all = [...historical, ...current],
         min = Math.min(...all),
         max = Math.max(...all),
-        range = max - min || 1,
+        padding = Math.max((max - min) * 0.25, key === "marketReturn" ? 0.25 : 2),
+        chartMin = min - padding,
+        chartMax = max + padding,
+        range = chartMax - chartMin || 1,
         rowTop = top + metricIndex * (rowHeight + gap),
-        y = (value) => rowTop + rowHeight - ((value - min) / range) * rowHeight,
+        y = (value) => rowTop + rowHeight - ((value - chartMin) / range) * rowHeight,
         historyPoints = historical.map((value, index) => `${x(index)},${y(value)}`).join(" "),
-        offset = result.phaseIndex * 5,
-        currentPoints = current.map((value, index) => `${x(offset + index)},${y(value)}`).join(" ");
-      return `<text x="8" y="${rowTop + rowHeight / 2}" class="metric-label">${label}</text><line x1="${left}" y1="${rowTop + rowHeight}" x2="${width - right}" y2="${rowTop + rowHeight}" class="similar-grid"/><polyline points="${historyPoints}" fill="none" stroke="${color}" class="history-line"/><polyline points="${currentPoints}" fill="none" stroke="${color}" class="current-line"/>`;
+        currentPoints = current.map((value, index) => `${x(index)},${y(value)}`).join(" "),
+        labels = historical
+          .map((value, index) => `<text x="${x(index)}" y="${y(value) - 9}" class="value-label" text-anchor="middle">${format(value)}</text>`)
+          .join(""),
+        dots = historical
+          .map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="2.5" fill="${color}"/>`)
+          .join("");
+      return `<text x="8" y="${rowTop + rowHeight / 2}" class="metric-label">${label}</text><line x1="${left}" y1="${rowTop + rowHeight}" x2="${width - right}" y2="${rowTop + rowHeight}" class="similar-grid"/><polyline points="${historyPoints}" fill="none" stroke="${color}" class="history-line"/>${dots}${labels}<polyline points="${currentPoints}" fill="none" stroke="#ffffff" class="current-line"/>`;
     })
     .join("");
-  chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="相似區間前段、中段、後段與目前趨勢疊合圖">${backgrounds}${lines}</svg>`;
+  chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="歷史相似走勢及其後十個交易日圖表">${backgrounds}${lines}</svg>`;
 }
 function renderSimilarTrendAnalysis(input = getInput()) {
   const summary = $("similarTrendSummary"),
@@ -2189,20 +2217,21 @@ function renderSimilarTrendAnalysis(input = getInput()) {
   if (!result) {
     badge.textContent = "資料不足";
     badge.className = "badge warning";
-    summary.textContent = `需要 ${decisionYear} 年至少 20 筆同時含風控水位、CNN 與大盤指數的交易日資料，才能比對完整 15 日區間。`;
+    summary.textContent = `需要 ${decisionYear} 年至少 20 筆同時含風控水位、CNN 與大盤指數的交易日資料，才能找出相似 5 日並觀察其後 10 日。`;
     phases.innerHTML = "";
     chart.innerHTML = '<p class="note">同步更多每日資料後會自動產生圖表。</p>';
     return;
   }
-  badge.textContent = `${result.similarity.toFixed(0)}% 相似 · ${result.phase}`;
+  badge.textContent = `${result.similarity.toFixed(0)}% 相似`;
   badge.className = "badge buy";
-  summary.textContent = `今年最相似的完整區間為 ${result.startDate}～${result.endDate}；目前近 5 日最接近其「${result.phase}」。綜合相似度 ${result.similarity.toFixed(1)}%。`;
-  const descriptions = ["趨勢形成", "方向延續與確認", "趨勢成熟或轉折觀察"];
+  const sign = (value, suffix) => `${value >= 0 ? "+" : ""}${value.toFixed(1)}${suffix}`;
+  summary.textContent = `目前近 5 日最像 ${result.startDate}～${result.matchEndDate}（相似度 ${result.similarity.toFixed(1)}%）。該歷史情境後 5 日：風控 ${sign(result.forecast.risk5, " 個百分點")}、大盤 ${sign(result.forecast.market5, "%")}、CNN ${sign(result.forecast.cnn5, " 點")}；後 10 日：風控 ${sign(result.forecast.risk10, " 個百分點")}、大盤 ${sign(result.forecast.market10, "%")}、CNN ${sign(result.forecast.cnn10, " 點")}。這是歷史情境預判，不是保證。`;
+  const descriptions = ["目前比對位置", "歷史未來短線", "歷史未來延伸"];
   phases.innerHTML = [0, 1, 2]
     .map((phase) => {
       const rows = result.segment.slice(phase * 5, phase * 5 + 5),
-        active = phase === result.phaseIndex;
-      return `<div class="similar-phase${active ? " active" : ""}"><span>${["前段", "中段", "後段"][phase]}</span><strong>${descriptions[phase]}</strong><small>${escapeHtml(rows[0].date)}～${escapeHtml(rows.at(-1).date)}</small>${active ? '<b>目前位置</b>' : ""}</div>`;
+        active = phase === 0;
+      return `<div class="similar-phase${active ? " active" : ""}"><span>${["相似 5 日", "後續 1–5 日", "後續 6–10 日"][phase]}</span><strong>${descriptions[phase]}</strong><small>${escapeHtml(rows[0].date)}～${escapeHtml(rows.at(-1).date)}</small>${active ? '<b>目前對齊</b>' : ""}</div>`;
     })
     .join("");
   renderSimilarTrendChart(result);
@@ -3822,19 +3851,24 @@ function runSelfTests() {
     );
     return latest?.date === "2026-10-23";
   });
-  test("相似趨勢可辨認目前位於完整區間中段", () => {
+  test("相似趨勢會接出歷史相似點後十日走向", () => {
     const historical = Array.from({ length: 15 }, (_, index) => ({
         date: `2026-01-${String(index + 1).padStart(2, "0")}`,
         arkAllocation: 60 + index * 1.2 + Math.sin(index) * 2,
         cnn: 35 + index * 1.8 + Math.cos(index) * 3,
         taiwanIndex: 18000 + index * 90 + Math.sin(index) * 120,
       })),
-      current = historical.slice(5, 10).map((row, index) => ({
+      current = historical.slice(0, 5).map((row, index) => ({
         ...row,
         date: `2026-10-${String(index + 1).padStart(2, "0")}`,
       })),
       result = analyzeSimilarTrend([...historical, ...current], 2026);
-    return result?.phase === "中段" && result.similarity > 99;
+    return (
+      result?.similarity > 99 &&
+      result.matchEndDate === "2026-01-05" &&
+      result.forecast.risk10 > 0 &&
+      result.forecast.market10 > 0
+    );
   });
   test("當下大盤新高會進入市場位置判斷", () => {
     const date = $("decisionDate").value,

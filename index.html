@@ -22,7 +22,7 @@
       href="icons/ark-strategy-icon.jpg?v=1"
     />
     <link rel="manifest" href="manifest.webmanifest?v=1" />
-    <link rel="stylesheet" href="styles.css?v=4.0" />
+    <link rel="stylesheet" href="styles.css?v=4.1" />
   </head>
   <body>
     <header class="topbar">
@@ -290,18 +290,18 @@
         <div class="section-head wrap">
           <div>
             <h2 id="similarTrendTitle">今年相似趨勢分析</h2>
-            <p>比對風控水位、CNN 恐懼貪婪指數與台灣加權指數走勢</p>
+            <p>風控水位 60% · 大盤每日漲跌幅 30% · CNN 指數 10%</p>
           </div>
           <span id="similarTrendBadge" class="badge neutral">分析中</span>
         </div>
         <p id="similarTrendSummary" class="similar-trend-summary">正在整理今年的同步資料…</p>
         <div id="similarTrendPhases" class="similar-trend-phases"></div>
         <div class="similar-trend-legend" aria-hidden="true">
-          <span><i class="historical"></i>相似完整區間</span>
-          <span><i class="current"></i>目前近 5 日（虛線）</span>
+          <span><i class="historical"></i>歷史相似期與後續走勢</span>
+          <span><i class="current"></i>目前近 5 日（白色虛線）</span>
         </div>
         <div id="similarTrendChart" class="similar-trend-chart" aria-label="今年相似趨勢分析圖"></div>
-        <p class="note">以今年交易日資料做形狀比對；相似區間用於辨認趨勢階段，不代表後續走勢必然重演。</p>
+        <p class="note">先比對目前近 5 日，再接出該歷史時間點後 10 個交易日的實際走勢，作為未來可能情境；歷史不保證重演。</p>
       </section>
 
       <details
@@ -560,7 +560,7 @@
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="config.js?v=4.4"></script>
     <script src="buy-engine-v2.js?v=2.7"></script>
-    <script src="app.js?v=5.4"></script>
+    <script src="app.js?v=5.5"></script>
     <script src="rebalance.js?v=2.7"></script>
     <script src="rebalance-ocr.js?v=1.9"></script>
   </body>
