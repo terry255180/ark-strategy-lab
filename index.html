@@ -22,7 +22,7 @@
       href="icons/ark-strategy-icon.jpg?v=1"
     />
     <link rel="manifest" href="manifest.webmanifest?v=1" />
-    <link rel="stylesheet" href="styles.css?v=4.8" />
+    <link rel="stylesheet" href="styles.css?v=4.9" />
   </head>
   <body>
     <header class="topbar">
@@ -434,22 +434,10 @@
             <p id="buyEngineExplanation"></p>
           </div>
           <section class="ocr-import" aria-labelledby="ocrTitle">
-            <div class="ocr-copy vision-entry">
-              <div>
-                <span class="vision-kicker">每日先從這裡開始</span>
-                <h3 id="ocrTitle">上傳方舟截圖，自動填入 ETF 資料</h3>
-                <p>
-                  最多選擇 5
-                  張截圖。辨識後先核對，按下確認才會套用到今天的布局清單。
-                </p>
-              </div>
-              <span class="badge buy">圖片辨識</span>
+            <div class="ocr-copy vision-entry vision-entry-compact">
+              <h3 id="ocrTitle">持股清單圖片辨識</h3>
+              <p>最多 5 張；辨識後核對內容，再套用到今日布局清單。</p>
             </div>
-            <ol class="vision-steps">
-              <li><strong>1</strong><span>選擇截圖</span></li>
-              <li><strong>2</strong><span>開始辨識</span></li>
-              <li><strong>3</strong><span>核對並套用</span></li>
-            </ol>
             <div class="ocr-actions">
               <label class="vision-token-field"
                 >AI 辨識密碼<input
@@ -462,7 +450,7 @@
                 ></label
               >
               <label class="file-button vision-file-button"
-                >① 選擇圖片<input
+                >選擇圖片<input
                   id="ocrImages"
                   type="file"
                   accept="image/*"
@@ -474,7 +462,7 @@
                 type="button"
                 disabled
               >
-                ② 開始辨識圖片
+                開始辨識
               </button>
               <button
                 id="clearOcrBtn"
@@ -493,7 +481,7 @@
             <div id="ocrReview" class="ocr-review" hidden>
               <div class="ocr-review-head">
                 <div>
-                  <h3>③ 核對辨識結果</h3>
+                  <h3>核對辨識結果</h3>
                   <p id="ocrValidationSummary">
                     請逐列核對；0 是合法值，空白代表無法可靠辨識。
                   </p>
