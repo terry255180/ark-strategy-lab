@@ -2178,6 +2178,7 @@ function analyzeSimilarTrend(records, year = new Date().getFullYear()) {
     ...best,
     cases: withForecast,
     caseCount: withForecast.length,
+    recent: rows.slice(-20),
     averageSimilarity: average(withForecast.map((item) => item.similarity)),
     stats: {
       market5: horizonStats("market5"),
@@ -2218,15 +2219,6 @@ function renderSimilarScenarioChart(result) {
       ["neutral", "中性", "#9b8afb", 126],
       ["pessimistic", "悲觀", "#e58a9c", 180],
     ],
-    values = series.flatMap(([key]) => result.scenarios[key].marketPath),
-    min = Math.min(0, ...values),
-    max = Math.max(0, ...values),
-    padding = Math.max((max - min) * 0.18, 0.75),
-    chartMin = min - padding,
-    chartMax = max + padding,
-    x = (index) => left + (index * plotWidth) / 10,
-    y = (value) => top + ((chartMax - value) * plotHeight) / (chartMax - chartMin),
-    zeroY = y(0),
     smoothPath = (points) => {
       if (points.length < 2) return "";
       return points.slice(1).reduce((path, point, index) => {
@@ -2240,30 +2232,63 @@ function renderSimilarScenarioChart(result) {
         return `${path} C ${control1X} ${control1Y}, ${control2X} ${control2Y}, ${point[0]} ${point[1]}`;
       }, `M ${points[0][0]} ${points[0][1]}`);
     },
-    grid = Array.from({ length: 5 }, (_, index) => {
-      const value = chartMax - (index * (chartMax - chartMin)) / 4,
-        gridY = y(value);
-      return `<line x1="${left}" y1="${gridY}" x2="${width - right}" y2="${gridY}" class="scenario-grid-line"/><text x="${left - 12}" y="${gridY + 4}" text-anchor="end">${value >= 0 ? "+" : ""}${value.toFixed(1)}%</text>`;
+    recent = result.recent || result.current,
+    currentIndex = Number(recent.at(-1).taiwanIndex),
+    historyOffset = 20 - recent.length,
+    marketX = (index) => left + (index * plotWidth) / 29,
+    marketPaths = Object.fromEntries(
+      series.map(([key]) => [
+        key,
+        result.scenarios[key].marketPath.map(
+          (value) => currentIndex * (1 + value / 100),
+        ),
+      ]),
+    ),
+    marketValues = [
+      ...recent.map((row) => Number(row.taiwanIndex)),
+      ...Object.values(marketPaths).flat(),
+    ],
+    marketMin = Math.min(...marketValues),
+    marketMax = Math.max(...marketValues),
+    marketPadding = Math.max((marketMax - marketMin) * 0.14, 120),
+    marketY = (value) =>
+      top +
+      ((marketMax + marketPadding - value) * plotHeight) /
+        (marketMax - marketMin + marketPadding * 2),
+    marketGrid = Array.from({ length: 5 }, (_, index) => {
+      const value =
+          marketMax + marketPadding -
+          (index * (marketMax - marketMin + marketPadding * 2)) / 4,
+        gridY = marketY(value);
+      return `<line x1="${left}" y1="${gridY}" x2="${width - right}" y2="${gridY}" class="scenario-grid-line"/><text x="${left - 12}" y="${gridY + 4}" text-anchor="end">${Math.round(value).toLocaleString("zh-TW")}</text>`;
     }).join(""),
-    dividers = [0, 5, 10]
-      .map((day) => `<line x1="${x(day)}" y1="${top}" x2="${x(day)}" y2="${height - bottom}" class="scenario-day-line"/>`)
-      .join(""),
-    lines = series
+    observedPoints = recent.map((row, index) => [
+      marketX(historyOffset + index),
+      marketY(Number(row.taiwanIndex)),
+    ]),
+    observedPath = smoothPath(observedPoints),
+    marketLines = series
       .map(([key, label, color, labelY]) => {
         const scenario = result.scenarios[key],
-          points = scenario.marketPath.map((value, index) => [x(index), y(value)]),
+          projected = marketPaths[key],
+          points = projected.map((value, index) => [marketX(19 + index), marketY(value)]),
           path = smoothPath(points),
           end = scenario.marketPath.at(-1),
-          endY = y(end),
+          target = projected.at(-1),
+          endY = marketY(target),
           dots = points
-            .map(([dotX, dotY], index) => `<circle cx="${dotX}" cy="${dotY}" r="${index === 10 ? 4.5 : 2.5}" fill="${color}" class="scenario-dot"/>`)
-            .join(""),
-          area = `${path} L ${x(10)} ${zeroY} L ${x(0)} ${zeroY} Z`;
-        return `<path d="${area}" fill="url(#scenario-${key}-fill)" class="scenario-area"/><path d="${path}" fill="none" stroke="${color}" class="scenario-line"/>${dots}<path d="M ${x(10) + 6} ${endY} C ${x(10) + 34} ${endY}, ${width - right + 26} ${labelY}, ${width - right + 44} ${labelY}" fill="none" stroke="${color}" class="scenario-connector"/><g class="scenario-result"><rect x="${width - right + 44}" y="${labelY - 19}" width="122" height="38" rx="8" fill="${color}" stroke="${color}"/><text x="${width - right + 56}" y="${labelY - 3}" class="scenario-result-label">${label}</text><text x="${width - 24}" y="${labelY + 11}" text-anchor="end" class="scenario-result-value">${end >= 0 ? "+" : ""}${end.toFixed(1)}%</text></g>`;
+            .map(([dotX, dotY], index) => `<circle cx="${dotX}" cy="${dotY}" r="${index === 10 ? 4.5 : 2.2}" fill="${color}" class="scenario-dot"/>`)
+            .join("");
+        return `<path d="${path}" fill="none" stroke="${color}" class="scenario-line scenario-forecast-line"/>${dots}<path d="M ${marketX(29) + 6} ${endY} C ${marketX(29) + 24} ${endY}, ${width - right + 24} ${labelY}, ${width - right + 44} ${labelY}" fill="none" stroke="${color}" class="scenario-connector"/><g class="scenario-result"><rect x="${width - right + 44}" y="${labelY - 19}" width="122" height="38" rx="8" fill="${color}" stroke="${color}"/><text x="${width - right + 56}" y="${labelY - 4}" class="scenario-result-label">${label} · ${Math.round(target).toLocaleString("zh-TW")} 點</text><text x="${width - 24}" y="${labelY + 12}" text-anchor="end" class="scenario-result-value">${end >= 0 ? "+" : ""}${end.toFixed(1)}%</text></g>`;
       })
       .join(""),
-    dayLabels = [0, 5, 10]
-      .map((day) => `<text x="${x(day)}" y="${height - 12}" text-anchor="middle">${day === 0 ? "相似點" : `後 ${day} 日`}</text>`)
+    marketLabels = [
+      [historyOffset, String(recent[0].date).slice(5).replace("-", "/")],
+      [19, "現在"],
+      [24, "後 5 日"],
+      [29, "後 10 日"],
+    ]
+      .map(([index, label]) => `<text x="${marketX(index)}" y="${height - 12}" text-anchor="middle">${label}</text>`)
       .join(""),
     riskHeight = 270,
     riskTop = 28,
@@ -2275,6 +2300,7 @@ function renderSimilarScenarioChart(result) {
     riskPadding = Math.max((riskMax - riskMin) * 0.14, 1),
     riskChartMin = riskMin - riskPadding,
     riskChartMax = riskMax + riskPadding,
+    x = (index) => left + (index * plotWidth) / 10,
     riskY = (value) =>
       riskTop +
       ((riskChartMax - value) * riskPlotHeight) / (riskChartMax - riskChartMin),
@@ -2299,8 +2325,11 @@ function renderSimilarScenarioChart(result) {
     riskDayLabels = [0, 5, 10]
       .map((day) => `<text x="${x(day)}" y="${riskHeight - 10}" text-anchor="middle">${day === 0 ? "目前" : `後 ${day} 日`}</text>`)
       .join(""),
-    marketSvg = `<h4>大盤累積報酬</h4><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="相似案例後十日的大盤累積報酬路徑"><defs><linearGradient id="scenario-optimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5bc0be" stop-opacity=".13"/><stop offset="1" stop-color="#5bc0be" stop-opacity="0"/></linearGradient><linearGradient id="scenario-neutral-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9b8afb" stop-opacity=".11"/><stop offset="1" stop-color="#9b8afb" stop-opacity="0"/></linearGradient><linearGradient id="scenario-pessimistic-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e58a9c" stop-opacity=".1"/><stop offset="1" stop-color="#e58a9c" stop-opacity="0"/></linearGradient></defs><rect x="${left}" y="${top}" width="${plotWidth}" height="${plotHeight}" rx="8" class="scenario-plot-bg"/>${grid}${dividers}<line x1="${left}" y1="${zeroY}" x2="${width - right}" y2="${zeroY}" class="scenario-zero-line"/>${lines}${dayLabels}</svg>`,
-    riskSvg = `<h4>方舟風控水位（依目前水位投影）</h4><svg viewBox="0 0 ${width} ${riskHeight}" role="img" aria-label="相似案例後十日的方舟風控水位路徑"><rect x="${left}" y="${riskTop}" width="${plotWidth}" height="${riskPlotHeight}" rx="8" class="scenario-plot-bg"/>${riskGrid}${dividers.replaceAll(`y2="${height - bottom}"`, `y2="${riskHeight - riskBottom}"`).replaceAll(`y1="${top}"`, `y1="${riskTop}"`)}<line x1="${left}" y1="${riskY(85)}" x2="${width - right}" y2="${riskY(85)}" class="scenario-threshold-line"/><text x="${left + 8}" y="${riskY(85) - 7}" class="scenario-threshold-label">85% 觀察線</text>${riskLines}${riskDayLabels}</svg>`;
+    marketSvg = `<h4>大盤實際走勢與歷史情境推演</h4><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="近期大盤實際走勢及後十日歷史情境推演"><rect x="${left}" y="${top}" width="${plotWidth}" height="${plotHeight}" rx="8" class="scenario-plot-bg"/>${marketGrid}<line x1="${marketX(19)}" y1="${top}" x2="${marketX(19)}" y2="${height - bottom}" class="scenario-now-line"/><text x="${marketX(19) + 8}" y="${top + 14}" class="scenario-now-label">現在</text><path d="${observedPath}" fill="none" class="scenario-observed-line"/><circle cx="${marketX(19)}" cy="${marketY(currentIndex)}" r="4.5" class="scenario-current-dot"/>${marketLines}${marketLabels}</svg>`,
+    riskDividers = [0, 5, 10]
+      .map((day) => `<line x1="${x(day)}" y1="${riskTop}" x2="${x(day)}" y2="${riskHeight - riskBottom}" class="scenario-day-line"/>`)
+      .join(""),
+    riskSvg = `<h4>方舟風控水位（依目前水位投影）</h4><svg viewBox="0 0 ${width} ${riskHeight}" role="img" aria-label="相似案例後十日的方舟風控水位路徑"><rect x="${left}" y="${riskTop}" width="${plotWidth}" height="${riskPlotHeight}" rx="8" class="scenario-plot-bg"/>${riskGrid}${riskDividers}<line x1="${left}" y1="${riskY(85)}" x2="${width - right}" y2="${riskY(85)}" class="scenario-threshold-line"/><text x="${left + 8}" y="${riskY(85) - 7}" class="scenario-threshold-label">85% 觀察線</text>${riskLines}${riskDayLabels}</svg>`;
   chart.innerHTML = marketSvg + riskSvg;
 }
 function renderSimilarTrendChart(result) {
