@@ -2206,10 +2206,11 @@ function analyzeSimilarTrend(records, year = new Date().getFullYear()) {
 function renderSimilarScenarioChart(result) {
   const chart = $("similarTrendScenarioChart");
   if (!chart) return;
-  const width = 900,
+  const mobile = window.matchMedia("(max-width: 600px)").matches,
+    width = mobile ? 390 : 900,
     height = 300,
-    left = 68,
-    right = 178,
+    left = mobile ? 48 : 68,
+    right = mobile ? 12 : 178,
     top = 52,
     bottom = 48,
     plotWidth = width - left - right,
@@ -2279,7 +2280,10 @@ function renderSimilarScenarioChart(result) {
           dots = points
             .map(([dotX, dotY], index) => `<circle cx="${dotX}" cy="${dotY}" r="${index === 10 ? 4.5 : 2.2}" fill="${color}" class="scenario-dot"/>`)
             .join("");
-        return `<path d="${path}" fill="none" stroke="${color}" class="scenario-line scenario-forecast-line"/>${dots}<path d="M ${marketX(29) + 6} ${endY} C ${marketX(29) + 24} ${endY}, ${width - right + 24} ${labelY}, ${width - right + 44} ${labelY}" fill="none" stroke="${color}" class="scenario-connector"/><g class="scenario-result"><rect x="${width - right + 44}" y="${labelY - 19}" width="122" height="38" rx="8" fill="${color}" stroke="${color}"/><text x="${width - right + 56}" y="${labelY - 4}" class="scenario-result-label">${label} · ${Math.round(target).toLocaleString("zh-TW")} 點</text><text x="${width - 24}" y="${labelY + 12}" text-anchor="end" class="scenario-result-value">${end >= 0 ? "+" : ""}${end.toFixed(1)}%</text></g>`;
+        const resultLabel = mobile
+          ? ""
+          : `<path d="M ${marketX(29) + 6} ${endY} C ${marketX(29) + 24} ${endY}, ${width - right + 24} ${labelY}, ${width - right + 44} ${labelY}" fill="none" stroke="${color}" class="scenario-connector"/><g class="scenario-result"><rect x="${width - right + 44}" y="${labelY - 19}" width="122" height="38" rx="8" fill="${color}" stroke="${color}"/><text x="${width - right + 56}" y="${labelY - 4}" class="scenario-result-label">${label} · ${Math.round(target).toLocaleString("zh-TW")} 點</text><text x="${width - 24}" y="${labelY + 12}" text-anchor="end" class="scenario-result-value">${end >= 0 ? "+" : ""}${end.toFixed(1)}%</text></g>`;
+        return `<path d="${path}" fill="none" stroke="${color}" class="scenario-line scenario-forecast-line"/>${dots}${resultLabel}`;
       })
       .join(""),
     marketLabels = [
@@ -2319,17 +2323,26 @@ function renderSimilarScenarioChart(result) {
           dots = points
             .map(([dotX, dotY], index) => `<circle cx="${dotX}" cy="${dotY}" r="${index === 10 ? 4.5 : 2.5}" fill="${color}" class="scenario-dot"/>`)
             .join("");
-        return `<path d="${path}" fill="none" stroke="${color}" class="scenario-line"/>${dots}<path d="M ${x(10) + 6} ${endY} C ${x(10) + 34} ${endY}, ${width - right + 26} ${labelY}, ${width - right + 44} ${labelY}" fill="none" stroke="${color}" class="scenario-connector"/><g class="scenario-result"><rect x="${width - right + 44}" y="${labelY - 19}" width="122" height="38" rx="8" fill="${color}" stroke="${color}"/><text x="${width - right + 56}" y="${labelY - 3}" class="scenario-result-label">${label}</text><text x="${width - 24}" y="${labelY + 11}" text-anchor="end" class="scenario-result-value">${end.toFixed(1)}%</text></g>`;
+        const resultLabel = mobile
+          ? ""
+          : `<path d="M ${x(10) + 6} ${endY} C ${x(10) + 34} ${endY}, ${width - right + 26} ${labelY}, ${width - right + 44} ${labelY}" fill="none" stroke="${color}" class="scenario-connector"/><g class="scenario-result"><rect x="${width - right + 44}" y="${labelY - 19}" width="122" height="38" rx="8" fill="${color}" stroke="${color}"/><text x="${width - right + 56}" y="${labelY - 3}" class="scenario-result-label">${label}</text><text x="${width - 24}" y="${labelY + 11}" text-anchor="end" class="scenario-result-value">${end.toFixed(1)}%</text></g>`;
+        return `<path d="${path}" fill="none" stroke="${color}" class="scenario-line"/>${dots}${resultLabel}`;
       })
       .join(""),
     riskDayLabels = [0, 5, 10]
       .map((day) => `<text x="${x(day)}" y="${riskHeight - 10}" text-anchor="middle">${day === 0 ? "目前" : `後 ${day} 日`}</text>`)
       .join(""),
-    marketSvg = `<h4>大盤實際走勢與歷史情境推演</h4><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="近期大盤實際走勢及後十日歷史情境推演"><rect x="${left}" y="${top}" width="${plotWidth}" height="${plotHeight}" rx="8" class="scenario-plot-bg"/>${marketGrid}<line x1="${marketX(19)}" y1="${top}" x2="${marketX(19)}" y2="${height - bottom}" class="scenario-now-line"/><text x="${marketX(19) + 8}" y="${top + 14}" class="scenario-now-label">現在</text><path d="${observedPath}" fill="none" class="scenario-observed-line"/><circle cx="${marketX(19)}" cy="${marketY(currentIndex)}" r="4.5" class="scenario-current-dot"/>${marketLines}${marketLabels}</svg>`,
+    mobileMarketSummary = mobile
+      ? `<div class="mobile-scenario-results">${series.map(([key, label, color]) => { const scenario = result.scenarios[key], target = marketPaths[key].at(-1), end = scenario.marketPath.at(-1); return `<div style="--scenario-color:${color}"><span>${label} · ${Math.round(target).toLocaleString("zh-TW")} 點</span><strong>${end >= 0 ? "+" : ""}${end.toFixed(1)}%</strong></div>`; }).join("")}</div>`
+      : "",
+    marketSvg = `<h4>大盤實際走勢與歷史情境推演</h4><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="近期大盤實際走勢及後十日歷史情境推演"><rect x="${left}" y="${top}" width="${plotWidth}" height="${plotHeight}" rx="8" class="scenario-plot-bg"/>${marketGrid}<line x1="${marketX(19)}" y1="${top}" x2="${marketX(19)}" y2="${height - bottom}" class="scenario-now-line"/><text x="${marketX(19) + 8}" y="${top + 14}" class="scenario-now-label">現在</text><path d="${observedPath}" fill="none" class="scenario-observed-line"/><circle cx="${marketX(19)}" cy="${marketY(currentIndex)}" r="4.5" class="scenario-current-dot"/>${marketLines}${marketLabels}</svg>${mobileMarketSummary}`,
     riskDividers = [0, 5, 10]
       .map((day) => `<line x1="${x(day)}" y1="${riskTop}" x2="${x(day)}" y2="${riskHeight - riskBottom}" class="scenario-day-line"/>`)
       .join(""),
-    riskSvg = `<h4>方舟風控水位（依目前水位投影）</h4><svg viewBox="0 0 ${width} ${riskHeight}" role="img" aria-label="相似案例後十日的方舟風控水位路徑"><rect x="${left}" y="${riskTop}" width="${plotWidth}" height="${riskPlotHeight}" rx="8" class="scenario-plot-bg"/>${riskGrid}${riskDividers}<line x1="${left}" y1="${riskY(85)}" x2="${width - right}" y2="${riskY(85)}" class="scenario-threshold-line"/><text x="${left + 8}" y="${riskY(85) - 7}" class="scenario-threshold-label">85% 觀察線</text>${riskLines}${riskDayLabels}</svg>`;
+    mobileRiskSummary = mobile
+      ? `<div class="mobile-scenario-results">${series.map(([key, label, color]) => `<div style="--scenario-color:${color}"><span>${label}</span><strong>${result.scenarios[key].riskPath.at(-1).toFixed(1)}%</strong></div>`).join("")}</div>`
+      : "",
+    riskSvg = `<h4>方舟風控水位（依目前水位投影）</h4><svg viewBox="0 0 ${width} ${riskHeight}" role="img" aria-label="相似案例後十日的方舟風控水位路徑"><rect x="${left}" y="${riskTop}" width="${plotWidth}" height="${riskPlotHeight}" rx="8" class="scenario-plot-bg"/>${riskGrid}${riskDividers}<line x1="${left}" y1="${riskY(85)}" x2="${width - right}" y2="${riskY(85)}" class="scenario-threshold-line"/><text x="${left + 8}" y="${riskY(85) - 7}" class="scenario-threshold-label">85% 觀察線</text>${riskLines}${riskDayLabels}</svg>${mobileRiskSummary}`;
   chart.innerHTML = marketSvg + riskSvg;
 }
 function renderSimilarTrendChart(result) {
