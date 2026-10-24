@@ -3655,7 +3655,7 @@ function renderETFExecution() {
     });
   $("etfCards").innerHTML = !hasAppliedETFs
     ? ""
-    : `<div class="etf-result-table" role="table" aria-label="ETF 代入結果"><div class="etf-result-row etf-result-head" role="row"><span>股票名稱／代號</span><span>位階股數／位階金額</span><span>實際股數／實際金額</span></div>${orders
+    : `<div class="etf-result-table" role="table" aria-label="ETF 代入結果"><div class="etf-result-row etf-result-head" role="row"><span>股票名稱／代號</span><span>實際股數／實際金額</span><span>位階股數／位階金額</span></div>${orders
         .map((o) => {
           const multiplierText = Number(o.itemMultiplier.toFixed(2)).toString(),
             positionSharesText = formatShares(o.positionShares),
@@ -3670,7 +3670,7 @@ function renderETFExecution() {
               o.positionAmount === null
                 ? "—"
                 : `${positionMoneyText} × ${multiplierText} = ${actualMoneyText}`;
-          return `<div class="etf-result-row" role="row"><div class="etf-result-cell etf-stock-cell"><strong>${escapeHtml(o.name || ETF_NAME_BY_SYMBOL[o.symbol] || "")}</strong><small>${escapeHtml(o.symbol)}</small></div><div class="etf-result-cell"><strong>${positionSharesText === "—" ? "—" : `${positionSharesText} 股`}</strong><small>${positionMoneyText}</small></div><div class="etf-result-cell etf-actual-cell"><strong>${shareFormula}</strong><small>${moneyFormula}</small><em>${escapeHtml(o.multiplierReason)}</em></div></div>`;
+          return `<div class="etf-result-row" role="row"><div class="etf-result-cell etf-stock-cell"><strong>${escapeHtml(o.name || ETF_NAME_BY_SYMBOL[o.symbol] || "")}</strong><small>${escapeHtml(o.symbol)}</small></div><div class="etf-result-cell etf-actual-cell"><strong>${shareFormula}</strong><small>${moneyFormula}</small><em>${escapeHtml(o.multiplierReason)}</em></div><div class="etf-result-cell"><strong>${positionSharesText === "—" ? "—" : `${positionSharesText} 股`}</strong><small>${positionMoneyText}</small></div></div>`;
         })
         .join("")}</div>`;
 }

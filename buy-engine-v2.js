@@ -29,6 +29,12 @@ const ETF_MASTER=Object.freeze({
   "00690":{name:"兆豐藍籌30",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_LARGE_CAP",leveraged:false},
   "00927":{name:"群益半導體收益",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"SEMICONDUCTOR",leveraged:false},
   "00894":{name:"中信小資高價30",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_LARGE_CAP",leveraged:false}
+  ,"00939":{name:"統一台灣高息動能",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_DIVIDEND",leveraged:false}
+  ,"00731":{name:"復華富時高息低波",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_DIVIDEND",leveraged:false}
+  ,"00918":{name:"大華優利高填息30",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_DIVIDEND",leveraged:false}
+  ,"00878":{name:"國泰永續高股息",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_DIVIDEND",leveraged:false}
+  ,"00938":{name:"凱基優選30",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_DIVIDEND",leveraged:false}
+  ,"00701":{name:"國泰股利精選30",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_DIVIDEND",leveraged:false}
 });
 const fieldAliases={premiumPercent:["premiumPercent","premium"],positionShares:["positionShares","arkShares"],positionAmount:["positionAmount","positionCapital"]};
 function value(row,key){for(const k of fieldAliases[key]||[key])if(row[k]!==undefined)return finite(row[k]);return null;}
@@ -74,6 +80,7 @@ test("未使用的NAV與風控欄位不產生警告",()=>validateArkImageData({i
 test("00988A能補入完整股票名稱",()=>normalizeItem({symbol:'00988A'}).name==="主動統一全球創新");
 test("動態ETF代碼不受固定清單限制",()=>validateArkImageData({items:[{symbol:'00999',name:'測試ETF',premiumPercent:0,positionShares:1,positionAmount:50}]}).items[0].validation.status==="VALIDATED");
 test("本次新ETF名稱已收錄",()=>normalizeItem({symbol:'00981A'}).name==="主動統一台股增長"&&normalizeItem({symbol:'00894'}).name==="中信小資高價30");
+test("高股息ETF中文名稱可依代號補齊",()=>normalizeItem({symbol:'00939'}).name==="統一台灣高息動能"&&normalizeItem({symbol:'00731'}).name==="復華富時高息低波"&&normalizeItem({symbol:'00918'}).name==="大華優利高填息30"&&normalizeItem({symbol:'00878'}).name==="國泰永續高股息"&&normalizeItem({symbol:'00938'}).name==="凱基優選30"&&normalizeItem({symbol:'00701'}).name==="國泰股利精選30");
 test("NAV×7≈155通過",()=>amountPass(22.09,7,155));
 test("NAV×70與155衝突",()=>amountPass(22.09,70,155)===false);
 test("Gap 0.8% HOLD",()=>calculateBaseGapFillRate(.8)===0);
