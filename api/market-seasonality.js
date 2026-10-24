@@ -14,7 +14,7 @@ module.exports = async function handler(req, res) {
     if (!result) throw new Error("查無台灣加權指數歷史資料");
     const timestamps = result.timestamp || [],
       closes = result.indicators?.quote?.[0]?.close || [],
-      points = timestamps.map((timestamp, index) => ({ date: new Date(Number(timestamp) * 1000), close: Number(closes[index]) })).filter((point) => Number.isFinite(point.close) && point.close > 0),
+      points = timestamps.map((timestamp, index) => ({ date: new Date(Number(timestamp) * 1000 + 8 * 3600 * 1000), close: Number(closes[index]) })).filter((point) => Number.isFinite(point.close) && point.close > 0),
       cases = [];
     const now = new Date();
     for (let index = 1; index < points.length; index += 1) {
