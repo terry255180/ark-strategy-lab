@@ -2095,7 +2095,17 @@ function compareTrendWindows(current, candidate) {
     scores,
   };
 }
-function analyzeSimilarTrend(records, year = new Date().getFullYear()) {
+const marketSeasonalityCache = {};
+const marketSeasonalityPending = {};
+function loadMarketSeasonality(month) {
+  if (Object.prototype.hasOwnProperty.call(marketSeasonalityCache, month) || marketSeasonalityPending[month]) return;
+  marketSeasonalityPending[month] = fetch(`/api/market-seasonality?month=${month}`)
+    .then((response) => response.json())
+    .then((data) => { marketSeasonalityCache[month] = data?.ok ? data : null; })
+    .catch(() => { marketSeasonalityCache[month] = null; })
+    .finally(() => { delete marketSeasonalityPending[month]; renderSimilarTrendAnalysis(); });
+}
+function analyzeSimilarTrend(records, year = new Date().getFullYear(), seasonality = null) {
   const rows = (records || [])
     .filter(
       (row) =>
@@ -2170,9 +2180,19 @@ function analyzeSimilarTrend(records, year = new Date().getFullYear()) {
         min: Math.min(...values),
       };
     },
-    sortedPaths = [...withForecast].sort(
-      (a, b) => a.forecast.market10 - b.forecast.market10,
+    averagePath = (key) => Array.from({ length: 11 }, (_, index) =>
+      average(withForecast.map((item) => item[key][index])),
     ),
+    similarMarketPath = averagePath("marketPath"),
+    seasonalTenDayReturn = seasonality ? Number(seasonality.averageReturn) * (10 / 21) : 0,
+    combinedMarketPath = similarMarketPath.map((value, index) =>
+      value * (seasonality ? 0.8 : 1) + seasonalTenDayReturn * (index / 10) * (seasonality ? 0.2 : 0),
+    ),
+    combinedRiskPath = averagePath("riskPath"),
+    similarUpRate = horizonStats("market10").upRate,
+    combinedUpRate = seasonality
+      ? similarUpRate * 0.8 + Number(seasonality.upRate) * 0.2
+      : similarUpRate,
     best = withForecast[0];
   return {
     ...best,
@@ -2195,11 +2215,19 @@ function analyzeSimilarTrend(records, year = new Date().getFullYear()) {
         ).length /
           withForecast.length) *
         100,
+      combinedUpRate,
+      combinedDownRate: 100 - combinedUpRate,
     },
+    seasonality,
     scenarios: {
-      pessimistic: sortedPaths[0],
-      neutral: sortedPaths[Math.floor(sortedPaths.length / 2)],
-      optimistic: sortedPaths.at(-1),
+      combined: {
+        marketPath: combinedMarketPath,
+        riskPath: combinedRiskPath,
+        forecast: {
+          market10: combinedMarketPath.at(-1),
+          risk10: combinedRiskPath.at(-1) - currentRisk,
+        },
+      },
     },
   };
 }
@@ -2215,11 +2243,7 @@ function renderSimilarScenarioChart(result) {
     bottom = 48,
     plotWidth = width - left - right,
     plotHeight = height - top - bottom,
-    series = [
-      ["optimistic", "樂觀", "#5bc0be", 72],
-      ["neutral", "中性", "#9b8afb", 126],
-      ["pessimistic", "悲觀", "#e58a9c", 180],
-    ],
+    series = [["combined", "綜合預測", "#5bc0be", 126]],
     smoothPath = (points) => {
       if (points.length < 2) return "";
       return points.slice(1).reduce((path, point, index) => {
@@ -2409,19 +2433,22 @@ function renderSimilarTrendAnalysis(input = getInput()) {
     chart = $("similarTrendChart"),
     scenarioChart = $("similarTrendScenarioChart");
   if (!summary || !phases || !badge || !chart || !scenarioChart) return;
-  const decisionYear = Number(String($("decisionDate")?.value || "").slice(0, 4)) ||
+  const decisionDate = String($("decisionDate")?.value || ""),
+    decisionYear = Number(decisionDate.slice(0, 4)) ||
       new Date().getFullYear(),
+    decisionMonth = Number(decisionDate.slice(5, 7)) || new Date().getMonth() + 1,
     records = recordsWithCurrentMarket(
       window.centralRecords?.length ? window.centralRecords : SOURCE_RECORDS,
       input,
     ),
-    result = analyzeSimilarTrend(records, decisionYear);
+    result = analyzeSimilarTrend(records, decisionYear, marketSeasonalityCache[decisionMonth]);
+  loadMarketSeasonality(decisionMonth);
   if (!result) {
     badge.textContent = "資料不足";
     badge.className = "badge warning";
     summary.textContent = `需要 ${decisionYear} 年至少 50 筆完整資料，並且至少找到 3 個互不重疊的相似區間，才能建立情境統計。`;
     phases.innerHTML = "";
-    scenarioChart.innerHTML = '<p class="note">目前沒有足夠的獨立案例可建立三種路徑。</p>';
+    scenarioChart.innerHTML = '<p class="note">目前沒有足夠的獨立案例可建立綜合預測路徑。</p>';
     chart.innerHTML = '<p class="note">同步更多每日資料後會自動產生圖表。</p>';
     return;
   }
@@ -2430,9 +2457,11 @@ function renderSimilarTrendAnalysis(input = getInput()) {
   const sign = (value, suffix = "%") => `${value >= 0 ? "+" : ""}${value.toFixed(1)}${suffix}`,
     s5 = result.stats.market5,
     s10 = result.stats.market10,
-    majority = s10.upRate >= 60 ? "多數案例偏多" : s10.upRate <= 40 ? "多數案例偏空" : "案例方向分歧";
-  summary.textContent = `已選取 ${result.caseCount} 個互不重疊的相似區間。後 10 日上漲比例 ${s10.upRate.toFixed(0)}%，平均報酬 ${sign(s10.average)}，判讀為「${majority}」。風控曾升抵 85% 的案例占 ${result.stats.reaches85Rate.toFixed(0)}%，風控上升但大盤下跌的背離案例占 ${result.stats.divergenceRate.toFixed(0)}%。統計是歷史情境，不代表未來保證。`;
-  phases.innerHTML = `<div class="similar-phase active"><span>上漲案例比例</span><strong>後 5 日 ${s5.upRate.toFixed(0)}% · 後 10 日 ${s10.upRate.toFixed(0)}%</strong><small>${result.caseCount} 個互不重疊案例</small></div><div class="similar-phase"><span>大盤報酬統計（後 10 日）</span><strong>平均 ${sign(s10.average)}</strong><small>最高 ${sign(s10.max)} · 最低 ${sign(s10.min)}</small></div><div class="similar-phase"><span>風控水位情境</span><strong>升抵 85%：${result.stats.reaches85Rate.toFixed(0)}%</strong><small>後 10 日平均 ${sign(result.stats.risk10Average, " 個百分點")}</small></div><div class="similar-phase"><span>風控／大盤背離</span><strong>${result.stats.divergenceRate.toFixed(0)}% 案例</strong><small>風控上升、但大盤下跌</small></div>`;
+    seasonal = result.seasonality,
+    upRate = result.stats.combinedUpRate,
+    majority = upRate >= 60 ? "綜合偏多" : upRate <= 40 ? "綜合偏空" : "方向接近中性";
+  summary.textContent = `綜合預測採相似趨勢 80%＋歷年 ${decisionMonth} 月季節性 20%。上漲機率 ${upRate.toFixed(0)}%、下跌機率 ${result.stats.combinedDownRate.toFixed(0)}%，判讀為「${majority}」。相似案例後 10 日平均報酬 ${sign(s10.average)}；${seasonal ? `歷年 ${decisionMonth} 月共 ${seasonal.caseCount} 個樣本，平均月報酬 ${sign(Number(seasonal.averageReturn))}` : "同月歷史資料讀取中"}。統計是歷史推演，不代表未來保證。`;
+  phases.innerHTML = `<div class="similar-phase active"><span>綜合漲跌機率</span><strong>上漲 ${upRate.toFixed(0)}% · 下跌 ${result.stats.combinedDownRate.toFixed(0)}%</strong><small>相似趨勢 80%＋同月季節性 20%</small></div><div class="similar-phase"><span>相似趨勢（後 10 日）</span><strong>上漲 ${s10.upRate.toFixed(0)}% · 平均 ${sign(s10.average)}</strong><small>${result.caseCount} 個案例；最高 ${sign(s10.max)} · 最低 ${sign(s10.min)}</small></div><div class="similar-phase"><span>歷年 ${decisionMonth} 月季節性</span><strong>${seasonal ? `上漲 ${Number(seasonal.upRate).toFixed(0)}% · 下跌 ${Number(seasonal.downRate).toFixed(0)}%` : "讀取中"}</strong><small>${seasonal ? `${seasonal.caseCount} 年樣本 · 平均 ${sign(Number(seasonal.averageReturn))}` : "由 Yahoo Finance 自動統計"}</small></div><div class="similar-phase"><span>風控水位情境</span><strong>升抵 85%：${result.stats.reaches85Rate.toFixed(0)}%</strong><small>後 10 日平均 ${sign(result.stats.risk10Average, " 個百分點")}</small></div>`;
   renderSimilarScenarioChart(result);
   renderSimilarTrendChart(result);
 }
@@ -4196,8 +4225,8 @@ function runSelfTests() {
       result?.caseCount === 5 &&
       result.stats.market10.upRate === 100 &&
       result.stats.market10.average > 0 &&
-      result.scenarios.optimistic.forecast.market10 >=
-        result.scenarios.pessimistic.forecast.market10
+      result.scenarios.combined.marketPath.length === 11 &&
+      Number.isFinite(result.scenarios.combined.forecast.market10)
     );
   });
   test("當下大盤新高會進入市場位置判斷", () => {

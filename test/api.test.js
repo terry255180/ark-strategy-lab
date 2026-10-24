@@ -7,6 +7,7 @@ const returnsHandler=require("../api/returns");
 const searchHandler=require("../api/search");
 const {normalizeQuote}=searchHandler;
 const visionHandler=require("../api/vision");
+const marketSeasonalityHandler=require("../api/market-seasonality");
 
 function responseRecorder(){return {statusCode:200,headers:{},payload:null,status(code){this.statusCode=code;return this;},setHeader(key,value){this.headers[key]=value;return this;},json(payload){this.payload=payload;return this;}};}
 function yahooFixture(){
@@ -48,6 +49,13 @@ test("股票名稱可經 search API 找到台股代號",async()=>{
 test("returns API 可取得並回傳行情",async()=>{
   const originalFetch=global.fetch;global.fetch=async()=>({ok:true,json:async()=>yahooFixture()});
   try{const res=responseRecorder();await returnsHandler({method:"GET",query:{symbols:"0050"}},res);assert.equal(res.statusCode,200);assert.equal(res.payload.ok,true);assert.equal(res.payload.items[0].symbol,"0050");assert.equal(res.payload.items[0].name,"元大台灣50");assert.ok(res.headers["Cache-Control"].includes("s-maxage=900"));}finally{global.fetch=originalFetch;}
+});
+
+test("歷年同月 API 會統計大盤漲跌機率",async()=>{
+  const originalFetch=global.fetch,timestamp=[],close=[];
+  for(let index=0;index<96;index++){timestamp.push(Math.floor(Date.UTC(2018+Math.floor(index/12),index%12,1)/1000));close.push(10000+index*50+(index%2?120:-80));}
+  global.fetch=async()=>({ok:true,json:async()=>({chart:{result:[{timestamp,indicators:{quote:[{close}]}}]}})});
+  try{const res=responseRecorder();await marketSeasonalityHandler({method:"GET",query:{month:"10"}},res);assert.equal(res.statusCode,200);assert.equal(res.payload.ok,true);assert.equal(res.payload.month,10);assert.ok(res.payload.caseCount>=5);assert.equal(Math.round(res.payload.upRate+res.payload.downRate),100);}finally{global.fetch=originalFetch;}
 });
 
 test("vision API 驗證密碼並正規化 Gemini 回應",async()=>{
