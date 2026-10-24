@@ -3655,7 +3655,24 @@ function renderETFExecution() {
     });
   $("etfCards").innerHTML = !hasAppliedETFs
     ? ""
-    : `<div class="etf-result-table" role="table" aria-label="ETF 代入結果"><div class="etf-result-row etf-result-head" role="row"><span>股票代號</span><span>股票名稱</span><span>位階股數</span><span>位階佈局金額</span><span>最佳倍率</span><span>實際佈局股數</span><span>實際佈局金額</span></div>${orders.map((o) => `<div class="etf-result-row" role="row"><strong>${escapeHtml(o.symbol)}</strong><span>${escapeHtml(o.name || ETF_NAME_BY_SYMBOL[o.symbol] || "")}<small>${escapeHtml(o.multiplierReason)}</small></span><span>${formatShares(o.positionShares)}</span><span>${formatMoney(o.positionAmount)}</span><span>${o.itemMultiplier.toFixed(2)}</span><span>${formatShares(o.actualShares)}</span><strong>${formatMoney(o.actualAmount)}</strong></div>`).join("")}</div>`;
+    : `<div class="etf-result-table" role="table" aria-label="ETF 代入結果"><div class="etf-result-row etf-result-head" role="row"><span>股票名稱／代號</span><span>位階股數／位階金額</span><span>實際股數／實際金額</span></div>${orders
+        .map((o) => {
+          const multiplierText = Number(o.itemMultiplier.toFixed(2)).toString(),
+            positionSharesText = formatShares(o.positionShares),
+            actualSharesText = formatShares(o.actualShares),
+            positionMoneyText = formatMoney(o.positionAmount),
+            actualMoneyText = formatMoney(o.actualAmount),
+            shareFormula =
+              o.positionShares === null
+                ? "—"
+                : `${positionSharesText} × ${multiplierText} = ${actualSharesText} 股`,
+            moneyFormula =
+              o.positionAmount === null
+                ? "—"
+                : `${positionMoneyText} × ${multiplierText} = ${actualMoneyText}`;
+          return `<div class="etf-result-row" role="row"><div class="etf-result-cell etf-stock-cell"><strong>${escapeHtml(o.name || ETF_NAME_BY_SYMBOL[o.symbol] || "")}</strong><small>${escapeHtml(o.symbol)}</small></div><div class="etf-result-cell"><strong>${positionSharesText === "—" ? "—" : `${positionSharesText} 股`}</strong><small>${positionMoneyText}</small></div><div class="etf-result-cell etf-actual-cell"><strong>${shareFormula}</strong><small>${moneyFormula}</small><em>${escapeHtml(o.multiplierReason)}</em></div></div>`;
+        })
+        .join("")}</div>`;
 }
 function loadHistory() {
   try {
