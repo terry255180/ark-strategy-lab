@@ -2444,7 +2444,7 @@ function decisionReasons(input, d) {
     );
   if (water.zone === "HIGH" && water.direction === "RISING")
     r.push(
-      `ARK 已進入今年前 10% 高水位（≥${levels.upperDecile}%）且持續上升，代表模型提高風險承擔；一般行情最高 3 倍，只有極端機會模式才開放 5 倍，這個區間不賣股票。`,
+      `ARK 已進入今年前 10% 高水位（≥${levels.upperDecile}%）且持續上升，代表模型提高風險承擔；一般非槓桿 ETF 最高 4 倍、槓桿 ETF 最高 3 倍，只有極端機會模式才開放非槓桿 ETF 5 倍，這個區間不賣股票。`,
     );
   else if (water.zone === "LOW" && water.direction === "FALLING")
     r.push(
@@ -2514,7 +2514,7 @@ function buildAllocationSummary(d, input, market = {}) {
     else if (fallingConfirmed)
       actionText = `ARK 趨勢仍弱，本次以 ${multiplier.toFixed(2)} 倍減速布局`;
     else actionText = `本次依 ${multiplier.toFixed(2)} 倍位階股數分批布局`;
-    return `目前持倉 ${actual.toFixed(2)}% 低於 ARK ${target.toFixed(2)}%，缺口 ${gap.toFixed(2)}%，屬於${size}。${trendContext} ${marketContext} 結論：${actionText}，一般行情最高 3 倍，且每日投入不超過推算總資產的 ${CONFIG.maxDailyBuyPercent.toFixed(0)}%；只有極端機會模式才開放 5 倍。不建議為追上目標一次買滿；後續只在 ARK 續升或缺口仍大時逐批補足。`;
+    return `目前持倉 ${actual.toFixed(2)}% 低於 ARK ${target.toFixed(2)}%，缺口 ${gap.toFixed(2)}%，屬於${size}。${trendContext} ${marketContext} 結論：${actionText}，一般非槓桿 ETF 最高 4 倍、槓桿 ETF 最高 3 倍，且每日投入不超過推算總資產的 ${CONFIG.maxDailyBuyPercent.toFixed(0)}%；只有極端機會模式才開放非槓桿 ETF 5 倍。不建議為追上目標一次買滿。`;
   }
   const size =
     absoluteGap > 5 ? "明顯超配" : absoluteGap > 2 ? "中度超配" : "輕微超配";
@@ -2597,7 +2597,7 @@ function buildTrendSummary(d, input = { todayArk: 0, actualAllocation: 0 }) {
     levels = water.levels,
     waterText =
       water.zone === "HIGH" && water.direction === "RISING"
-        ? `ARK 位於前 10% 高水位（${levels.upperDecile}%～${levels.max}%）並續升，視為模型在相對低檔加大風險承擔：一般缺口最高 3 倍，1%～5% 小缺口可逐步提高至 5 倍，且此區間不賣股票。`
+        ? `ARK 位於前 10% 高水位（${levels.upperDecile}%～${levels.max}%）並續升，視為模型在相對低檔加大風險承擔：一般非槓桿 ETF 最高 4 倍、槓桿 ETF 最高 3 倍，且此區間不賣股票。`
         : water.zone === "LOW" && water.direction === "FALLING"
           ? `ARK 位於後 10% 低水位（${levels.min}%～${levels.lowerDecile}%）並續降，視為模型降低風險：布局最多 1 倍，持倉超額時才分批調節。`
           : `ARK 尚未同時符合極端水位與延續方向，維持一般分批規則。`,
@@ -3315,6 +3315,31 @@ function applyArkWaterLevelMultiplierPolicy(plan, input, d) {
     scale = Math.max(scale, round(highScale, 2));
     policy = "HIGH_RISING_ACCELERATE";
   }
+  const similar = input.similarTrendAnalysis,
+    stats = similar?.stats,
+    gapBase =
+      d.gap > 15 ? 4 : d.gap > 10 ? 3 : d.gap > 5 ? 2 : d.gap > 1 ? 1 : 0;
+  let similarityAdjustment = 0;
+  if (stats) {
+    if (stats.market10.upRate >= 60 && stats.market10.average > 0)
+      similarityAdjustment += 1;
+    else if (stats.market10.upRate <= 40 && stats.market10.average < 0)
+      similarityAdjustment -= 1;
+    if (stats.risk10Average > 0 || stats.reaches85Rate >= 40)
+      similarityAdjustment += 0.5;
+    if (stats.risk10Average < 0 && stats.market10.average < 0)
+      similarityAdjustment -= 0.5;
+  }
+  const defensiveBrake =
+    state.value < 70 ||
+    (d.gap > CONFIG.defensiveAccumulationGap && state.direction === "FALLING") ||
+    (state.zone === "LOW" && state.direction === "FALLING");
+  if (!defensiveBrake && gapBase > 0) {
+    scale = Math.max(scale, gapBase + similarityAdjustment);
+    policy = stats
+      ? "GAP_AND_SIMILAR_TREND_OPTIMAL"
+      : "GAP_BASED_OPTIMAL";
+  }
   const extremeMode = plan.buyMode === "EXTREME_DEPLOYMENT",
     multiplierCap = extremeMode
       ? CONFIG.maxBuyMultiplier
@@ -3343,6 +3368,17 @@ function applyArkWaterLevelMultiplierPolicy(plan, input, d) {
       CONFIG.maxDailyBuyPercent,
     ),
     waterLevelMultiplierPolicy: policy,
+    similarTrendMultiplier: stats
+      ? {
+          cases: similar.caseCount,
+          upRate10D: stats.market10.upRate,
+          averageReturn10D: stats.market10.average,
+          riskChange10D: stats.risk10Average,
+          reaches85Rate: stats.reaches85Rate,
+          gapBase,
+          adjustment: similarityAdjustment,
+        }
+      : null,
   };
 }
 function buildBuyV2Plan(input, d) {
@@ -3361,7 +3397,35 @@ function buildBuyV2Plan(input, d) {
     marketPosition: input.marketPosition,
     urgency: d.urgency,
   });
-  return applyArkWaterLevelMultiplierPolicy(plan, input, d);
+  const year = Number(String(date).slice(0, 4)) || new Date().getFullYear(),
+    similarTrendAnalysis = analyzeSimilarTrend(
+      recordsWithCurrentMarket(
+        window.centralRecords?.length ? window.centralRecords : SOURCE_RECORDS,
+        input,
+      ),
+      year,
+    );
+  const adjusted = applyArkWaterLevelMultiplierPolicy(
+    plan,
+    { ...input, similarTrendAnalysis },
+    d,
+  ),
+    effectiveExecution = adjusted.orders.reduce((sum, item) => {
+      const recommendation = calculateEtfRecommendedMultiplier(item, adjusted);
+      return (
+        sum +
+        Math.max(0, Number(item.positionAmount) || 0) *
+          recommendation.multiplier
+      );
+    }, 0);
+  return {
+    ...adjusted,
+    effectiveExecution: round(effectiveExecution, 2),
+    pendingCapital: round(
+      Math.max(0, adjusted.theoreticalExecution - effectiveExecution),
+      2,
+    ),
+  };
 }
 function renderExecutionBuffer(plan) {
   return `Execution Buffer：本次待累積 NT$ ${Math.round(plan.pendingCapital).toLocaleString("zh-TW")}；只累積資金，隔日依最新 ARK 權重重新分配。`;
@@ -3399,6 +3463,12 @@ function renderBuyEngine(plan, input, d) {
     ["TARGET GAP FILL", `${plan.targetGapFillPercent.toFixed(2)}%`],
     ["DYNAMIC SCALE", `×${plan.dynamicScale.toFixed(2)}`],
     [
+      "SIMILAR TREND BASIS",
+      plan.similarTrendMultiplier
+        ? `10D 上漲 ${plan.similarTrendMultiplier.upRate10D.toFixed(0)}% · 調整 ${plan.similarTrendMultiplier.adjustment >= 0 ? "+" : ""}${plan.similarTrendMultiplier.adjustment.toFixed(1)}x`
+        : "資料不足，依缺口計算",
+    ],
+    [
       "THEORETICAL EXECUTION",
       `NT$ ${Math.round(plan.theoreticalExecution).toLocaleString("zh-TW")}`,
     ],
@@ -3420,16 +3490,49 @@ function renderBuyEngine(plan, input, d) {
     d,
   );
 }
+function calculateEtfRecommendedMultiplier(item, plan) {
+  const globalScale = Math.max(0, Number(plan?.dynamicScale || 0)),
+    leveraged = Boolean(item?.leveraged) || item?.assetType === "LEVERAGED_TW",
+    nonLeveragedCap = plan?.buyMode === "EXTREME_DEPLOYMENT" ? 5 : 4,
+    cappedScale = Math.min(globalScale, leveraged ? 3 : nonLeveragedCap),
+    premium = Number(item?.premiumPercent ?? item?.premium ?? 0);
+  let factor = 1,
+    reason = premium <= 0 ? "折價／淨值內完整布局" : "小幅溢價完整布局";
+  if (premium > 1) {
+    factor = 0;
+    reason = "溢價超過 1%，等待淨值";
+  } else if (premium > 0.5) {
+    factor = Number(plan?.gap || 0) > 10 ? 0.25 : 0;
+    reason = factor ? "缺口較大，僅布局四分之一" : "溢價偏高，等待淨值";
+  } else if (premium > 0.3) {
+    factor = 0.5;
+    reason = "溢價 0.3%～0.5%，布局一半";
+  }
+  return {
+    multiplier: Math.floor(cappedScale * factor * 100) / 100,
+    factor,
+    leveraged,
+    reason: leveraged ? `${reason}；槓桿 ETF 上限 3x` : reason,
+  };
+}
 function summarizePositionExecution(plan) {
   const multiplier = Math.max(0, Number(plan?.dynamicScale || 0)),
     baseAmount = (plan?.orders || []).reduce(
       (sum, item) => sum + Math.max(0, Number(item.positionAmount) || 0),
       0,
-    );
+    ),
+    totalAmount = (plan?.orders || []).reduce((sum, item) => {
+      const recommendation = calculateEtfRecommendedMultiplier(item, plan);
+      return (
+        sum +
+        Math.max(0, Number(item.positionAmount) || 0) *
+          recommendation.multiplier
+      );
+    }, 0);
   return {
     multiplier,
     baseAmount: round(baseAmount, 2),
-    totalAmount: Math.max(0, Math.round(baseAmount * multiplier)),
+    totalAmount: Math.max(0, Math.round(totalAmount)),
   };
 }
 function renderDashboard() {
@@ -3464,7 +3567,7 @@ function renderDashboard() {
         : "今日不交易";
   $("speedValue").textContent =
     d.action === "BUY"
-      ? `位階 ×${positionExecution.multiplier.toFixed(2)}`
+      ? `一般 ×${Math.min(positionExecution.multiplier, 4).toFixed(2)} · 槓桿最高 ×3`
       : d.action === "SELL"
         ? `賣出超額部位的 ${(d.rate * 100).toFixed(0)}%`
         : "0";
@@ -3486,7 +3589,7 @@ function renderDashboard() {
         : "—";
   $("executionSpeed").textContent =
     d.action === "BUY"
-      ? `位階股數（依淨值）× ${positionExecution.multiplier.toFixed(2)} 倍`
+      ? `依缺口＋相似趨勢：一般最高 ${Math.min(positionExecution.multiplier, 4).toFixed(2)} 倍，槓桿最高 3 倍`
       : d.action === "SELL"
         ? `賣出超額部位的 ${(d.rate * 100).toFixed(0)}%`
         : "不交易";
@@ -3530,25 +3633,29 @@ function renderETFExecution() {
     orders = (plan.orders || []).map((o) => {
       const positionShares = finiteOrNull(o.positionShares),
         positionAmount = finiteOrNull(o.positionAmount),
+        recommendation = calculateEtfRecommendedMultiplier(o, plan),
+        itemMultiplier = recommendation.multiplier,
         actualShares =
           positionShares === null
             ? null
-            : round(positionShares * multiplier, 2),
+            : round(positionShares * itemMultiplier, 2),
         actualAmount =
           positionAmount === null
             ? null
-            : Math.max(0, Math.round(positionAmount * multiplier));
+            : Math.max(0, Math.round(positionAmount * itemMultiplier));
       return {
         ...o,
         positionShares,
         positionAmount,
+        itemMultiplier,
+        multiplierReason: recommendation.reason,
         actualShares,
         actualAmount,
       };
     });
   $("etfCards").innerHTML = !hasAppliedETFs
     ? ""
-    : `<div class="etf-result-table" role="table" aria-label="ETF 代入結果"><div class="etf-result-row etf-result-head" role="row"><span>股票代號</span><span>股票名稱</span><span>位階股數</span><span>位階佈局金額</span><span>倍率</span><span>實際佈局股數</span><span>實際佈局金額</span></div>${orders.map((o) => `<div class="etf-result-row" role="row"><strong>${escapeHtml(o.symbol)}</strong><span>${escapeHtml(o.name || ETF_NAME_BY_SYMBOL[o.symbol] || "")}</span><span>${formatShares(o.positionShares)}</span><span>${formatMoney(o.positionAmount)}</span><span>${multiplier.toFixed(2)}</span><span>${formatShares(o.actualShares)}</span><strong>${formatMoney(o.actualAmount)}</strong></div>`).join("")}</div>`;
+    : `<div class="etf-result-table" role="table" aria-label="ETF 代入結果"><div class="etf-result-row etf-result-head" role="row"><span>股票代號</span><span>股票名稱</span><span>位階股數</span><span>位階佈局金額</span><span>最佳倍率</span><span>實際佈局股數</span><span>實際佈局金額</span></div>${orders.map((o) => `<div class="etf-result-row" role="row"><strong>${escapeHtml(o.symbol)}</strong><span>${escapeHtml(o.name || ETF_NAME_BY_SYMBOL[o.symbol] || "")}<small>${escapeHtml(o.multiplierReason)}</small></span><span>${formatShares(o.positionShares)}</span><span>${formatMoney(o.positionAmount)}</span><span>${o.itemMultiplier.toFixed(2)}</span><span>${formatShares(o.actualShares)}</span><strong>${formatMoney(o.actualAmount)}</strong></div>`).join("")}</div>`;
 }
 function loadHistory() {
   try {
@@ -4129,7 +4236,7 @@ function runSelfTests() {
       );
     return plan.dynamicScale === 2;
   });
-  test("ARK前10%高水位續升會加強布局", () => {
+  test("ARK前10%高水位且大缺口會提高至4倍", () => {
     const input = {
         todayArk: 87.4,
         actualAllocation: 20,
@@ -4151,7 +4258,7 @@ function runSelfTests() {
         { dynamicScale: 1, arkBaseTotal: 1000 },
         input,
         d,
-      ).dynamicScale === 3
+      ).dynamicScale === 4
     );
   });
   test("一般行情即使高水位續升也不超過3倍", () => {
@@ -4231,6 +4338,21 @@ function runSelfTests() {
         d,
       );
     return plan.dynamicScale === 2 && plan.dailyCapitalLimit === 20000;
+  });
+  test("逐檔倍率會套用溢價折減與槓桿上限", () => {
+    const plan = { dynamicScale: 4, gap: 14, buyMode: "ACCELERATED" };
+    return (
+      calculateEtfRecommendedMultiplier({ premiumPercent: 0.2 }, plan)
+        .multiplier === 4 &&
+      calculateEtfRecommendedMultiplier({ premiumPercent: 0.4 }, plan)
+        .multiplier === 2 &&
+      calculateEtfRecommendedMultiplier({ premiumPercent: 0.8 }, plan)
+        .multiplier === 1 &&
+      calculateEtfRecommendedMultiplier(
+        { premiumPercent: 0.2, leveraged: true },
+        plan,
+      ).multiplier === 3
+    );
   });
   test("±1%無動作區間不因高水位放大倍率", () => {
     const input = {
@@ -4579,6 +4701,7 @@ window.ARKStrategyLab = {
   renderStrategyValidation,
   renderSensitivityValidation,
   summarizePositionExecution,
+  calculateEtfRecommendedMultiplier,
   buildAllocationSummary,
   buildTrendSummary,
   saveDailySnapshot,
