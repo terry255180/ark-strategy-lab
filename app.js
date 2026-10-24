@@ -2209,7 +2209,7 @@ function renderSimilarScenarioChart(result) {
   const mobile = window.matchMedia("(max-width: 600px)").matches,
     width = mobile ? 390 : 900,
     height = 300,
-    left = mobile ? 48 : 68,
+    left = mobile ? 72 : 68,
     right = mobile ? 12 : 178,
     top = 52,
     bottom = 48,
