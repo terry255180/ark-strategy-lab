@@ -1792,7 +1792,49 @@ async function recognizeArkScreenshots() {
     $("runOcrBtn").disabled = !ocrFiles.length;
   }
 }
-function applyOcrRows() {
+async function saveEtfListToGoogleSheet() {
+  const endpoint = CONFIG.googleSheets?.webAppUrl,
+    token = $("visionAccessToken")?.value.trim(),
+    plan = window.currentDecision?._v2Plan;
+  if (!endpoint) throw new Error("尚未設定 Google Sheet Apps Script 網址");
+  if (!token) throw new Error("請先輸入 AI 辨識密碼");
+  const orderBySymbol = new Map((plan?.orders || []).map((item) => [item.symbol, item])),
+    items = (window.currentETFs || []).map((etf, index) => {
+      const order = orderBySymbol.get(etf.symbol) || etf,
+        recommendation = calculateEtfRecommendedMultiplier(order, plan),
+        multiplier = recommendation.multiplier,
+        positionShares = finiteOrNull(etf.arkShares ?? etf.positionShares),
+        positionAmount = finiteOrNull(etf.positionCapital ?? etf.positionAmount);
+      return {
+        rank: index + 1,
+        symbol: etf.symbol,
+        name: etf.name || ETF_NAME_BY_SYMBOL[etf.symbol] || "",
+        price: finiteOrNull(etf.nav),
+        premiumPercent: finiteOrNull(etf.premium),
+        positionShares,
+        positionAmount,
+        multiplier,
+        actualShares: positionShares === null ? null : round(positionShares * multiplier, 2),
+        actualAmount: positionAmount === null ? null : Math.round(positionAmount * multiplier),
+      };
+    }),
+    response = await fetch(endpoint, {
+      method: "POST",
+      redirect: "follow",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({
+        action: "saveEtfList",
+        token,
+        date: $("decisionDate").value,
+        items,
+      }),
+    });
+  if (!response.ok) throw new Error(`Google Sheet HTTP ${response.status}`);
+  const payload = await response.json();
+  if (!payload.ok) throw new Error(payload.error || "Google Sheet 儲存失敗");
+  return payload;
+}
+async function applyOcrRows() {
   const numericFields = ["premium", "arkShares", "positionCapital"];
   ocrRows = ocrRows
     .map((row, index) => {
@@ -1854,7 +1896,22 @@ function applyOcrRows() {
   window.BuyEngineV2.saveDailySnapshot(confirmed);
   saveETFs();
   renderDashboard();
-  resetOcrImport(successText);
+  let finalText = successText;
+  if ($("saveEtfListOption")?.checked) {
+    const button = $("applyOcrBtn");
+    button.disabled = true;
+    button.textContent = "正在儲存…";
+    try {
+      const saved = await saveEtfListToGoogleSheet();
+      finalText += ` 已儲存 ${saved.date} 共 ${saved.savedCount} 檔至 Google Sheet；重複資料已更新。`;
+    } catch (error) {
+      finalText += ` Google Sheet 尚未儲存：${String(error?.message || error)}`;
+    } finally {
+      button.disabled = false;
+      button.textContent = "確認並套用今日資料";
+    }
+  }
+  resetOcrImport(finalText);
   $("etfCards").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 function calculateETFOrders(etfs, decision) {

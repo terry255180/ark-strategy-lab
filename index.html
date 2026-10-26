@@ -22,7 +22,7 @@
       href="icons/ark-strategy-icon.jpg?v=1"
     />
     <link rel="manifest" href="manifest.webmanifest?v=1" />
-    <link rel="stylesheet" href="styles.css?v=5.1" />
+    <link rel="stylesheet" href="styles.css?v=5.2" />
   </head>
   <body>
     <header class="topbar">
@@ -486,9 +486,12 @@
                     請逐列核對；0 是合法值，空白代表無法可靠辨識。
                   </p>
                 </div>
-                <button id="applyOcrBtn" class="button secondary" type="button">
-                  確認並套用今日資料
-                </button>
+                <div class="ocr-apply-actions">
+                  <label class="save-etf-option"><input id="saveEtfListOption" type="checkbox" checked> 同時儲存至 Google Sheet</label>
+                  <button id="applyOcrBtn" class="button secondary" type="button">
+                    確認並套用今日資料
+                  </button>
+                </div>
               </div>
               <div id="ocrReviewGrid" class="ocr-review-grid"></div>
             </div>
@@ -551,7 +554,7 @@
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="config.js?v=4.5"></script>
     <script src="buy-engine-v2.js?v=2.9"></script>
-    <script src="app.js?v=6.6"></script>
+    <script src="app.js?v=6.7"></script>
     <script src="rebalance.js?v=2.7"></script>
     <script src="rebalance-ocr.js?v=1.9"></script>
   </body>

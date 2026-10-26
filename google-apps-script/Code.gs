@@ -184,11 +184,70 @@ function calculateReturnsFromYahoo_(symbol, body) {
 function doPost(event) {
   try {
     const request = JSON.parse(event && event.postData && event.postData.contents || '{}');
+    if (request.action === 'saveEtfList') return jsonOutput(saveEtfDailyList_(request));
     if (request.action === 'vision') return jsonOutput(analyzeArkImages_(request));
     if (request.action === 'rebalanceVision') return jsonOutput(analyzeHoldingImages_(request));
     return jsonOutput({ ok: false, error: '不支援的操作。' });
   } catch (error) {
     return jsonOutput({ ok: false, error: String(error && error.message || error) });
+  }
+}
+
+function saveEtfDailyList_(request) {
+  const properties = PropertiesService.getScriptProperties();
+  const accessToken = properties.getProperty('VISION_ACCESS_TOKEN');
+  if (!accessToken) throw new Error('Apps Script 尚未設定 VISION_ACCESS_TOKEN。');
+  if (!request.token || request.token !== accessToken) throw new Error('AI 辨識密碼不正確。');
+  const date = String(request.date || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('ETF 清單日期格式錯誤。');
+  const items = Array.isArray(request.items) ? request.items.slice(0, 20) : [];
+  if (!items.length) throw new Error('沒有可儲存的 ETF 清單。');
+  const headers = ['日期', '排名', '股票代號', '股票名稱', '即時價格', '折溢價(%)', '位階股數', '位階金額', '建議倍率', '建議股數', '建議金額', '儲存時間'];
+  const rows = items.map((item, index) => {
+    const symbol = String(item && item.symbol || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+    if (!/^\d{4,6}[A-Z]?$/.test(symbol)) throw new Error(`第 ${index + 1} 檔 ETF 代號錯誤。`);
+    return [
+      date,
+      Math.max(1, Math.round(Number(item.rank) || index + 1)),
+      symbol,
+      String(item.name || '').replace(/[\r\n\t]/g, ' ').trim(),
+      numberOrNull_(item.price),
+      numberOrNull_(item.premiumPercent),
+      integerOrNull_(item.positionShares),
+      integerOrNull_(item.positionAmount),
+      numberOrNull_(item.multiplier),
+      numberOrNull_(item.actualShares),
+      integerOrNull_(item.actualAmount),
+      Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss')
+    ];
+  });
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+    let sheet = spreadsheet.getSheetByName('ETF每日清單');
+    if (!sheet) {
+      sheet = spreadsheet.insertSheet('ETF每日清單');
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#123b44').setFontColor('#ffffff');
+      sheet.setFrozenRows(1);
+    } else if (sheet.getLastRow() === 0) {
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    }
+    const symbols = new Set(rows.map(row => row[2]));
+    if (sheet.getLastRow() > 1) {
+      const existing = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getDisplayValues();
+      const deleteRows = [];
+      existing.forEach((row, index) => {
+        const existingDate = String(row[0]).replace(/\//g, '-');
+        if (existingDate === date && symbols.has(String(row[2]).toUpperCase())) deleteRows.push(index + 2);
+      });
+      deleteRows.sort((a, b) => b - a).forEach(rowNumber => sheet.deleteRow(rowNumber));
+    }
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
+    sheet.autoResizeColumns(1, headers.length);
+    return { ok: true, sheet: sheet.getName(), date, savedCount: rows.length, updatedDuplicates: true };
+  } finally {
+    lock.releaseLock();
   }
 }
 
