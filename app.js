@@ -1832,6 +1832,11 @@ async function saveEtfListToGoogleSheet() {
   if (!response.ok) throw new Error(`Google Sheet HTTP ${response.status}`);
   const payload = await response.json();
   if (!payload.ok) throw new Error(payload.error || "Google Sheet 儲存失敗");
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(String(payload.date || "")) ||
+    !Number.isFinite(Number(payload.savedCount))
+  )
+    throw new Error("Apps Script 尚未部署 ETF 清單儲存功能，請更新既有部署版本");
   return payload;
 }
 async function applyOcrRows() {
