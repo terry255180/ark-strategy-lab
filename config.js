@@ -195,7 +195,7 @@ window.CONFIG = Object.freeze({
   googleSheets: {
     enabled: true,
     webAppUrl:
-      "https://script.google.com/macros/s/AKfycbx_hrLGj3Hhezed8EpAX_INeZxbvRl4xW6AcEbjVu6VeWGTJz-f1zgQLl88b9FgXkQk/exec",
+      "https://script.google.com/macros/s/AKfycby_pcukAJMHn-Z_yzeCPqDc35QbSotwAQX0GrMl9i6uSj-JFz_X4DGHxkiSgM7zrK7BNg/exec",
     sheetName: "紀錄",
     spreadsheetId: "1YlZu_ztxjwjdBkld25l4H4WdaBb94E8u3r02-ew3NfA",
     gid: "671589303",
