@@ -2165,7 +2165,11 @@ function loadMarketSeasonality(month) {
     .then((response) => response.json())
     .then((data) => { marketSeasonalityCache[month] = data?.ok ? data : null; })
     .catch(() => { marketSeasonalityCache[month] = null; })
-    .finally(() => { delete marketSeasonalityPending[month]; renderSimilarTrendAnalysis(); });
+    .finally(() => {
+      delete marketSeasonalityPending[month];
+      if (window.currentDecision) renderDashboard();
+      else renderSimilarTrendAnalysis();
+    });
 }
 function analyzeSimilarTrend(records, year = new Date().getFullYear(), seasonality = null) {
   const rows = (records || [])
@@ -2569,7 +2573,7 @@ function decisionReasons(input, d) {
   }
   if (d.action === "BUY" && d.gap > CONFIG.defensiveAccumulationGap)
     r.push(
-      `缺口超過 20% 時仍採分批建倉；ARK 位於 6x% 或趨勢下降時踩煞車至 1 倍，其餘區間考慮折溢價篩選，以約 2 倍提高實際成交涵蓋率。`,
+      `缺口較大時採平滑加速建倉，不再因跨過 20% 門檻突然降速；最終倍率再依未來上漲／下跌機率與 ARK 趨勢微調。`,
     );
   else if (d.action === "BUY" && d.trend.delta1D < 0)
     r.push("ARK 走弱時保留買進方向，但降低建倉速度。");
@@ -2610,15 +2614,12 @@ function buildAllocationSummary(d, input, market = {}) {
           ? "中度低配"
           : "輕度低配";
     let actionText;
-    if (gap > CONFIG.defensiveAccumulationGap && multiplier <= 1.05)
-      actionText =
-        "缺口雖大，但為避免一次追滿，本次固定使用 1 倍位階股數分批布局";
-    else if (water.zone === "HIGH" && water.direction === "RISING")
+    if (water.zone === "HIGH" && water.direction === "RISING")
       actionText = `ARK 已進入前 10% 高水位並續升，本次可使用 ${multiplier.toFixed(2)} 倍位階股數加強布局`;
     else if (fallingConfirmed)
       actionText = `ARK 趨勢仍弱，本次以 ${multiplier.toFixed(2)} 倍減速布局`;
     else actionText = `本次依 ${multiplier.toFixed(2)} 倍位階股數分批布局`;
-    return `目前持倉 ${actual.toFixed(2)}% 低於 ARK ${target.toFixed(2)}%，缺口 ${gap.toFixed(2)}%，屬於${size}。${trendContext} ${marketContext} 結論：${actionText}，一般非槓桿 ETF 最高 4 倍、槓桿 ETF 最高 3 倍，且每日投入不超過推算總資產的 ${CONFIG.maxDailyBuyPercent.toFixed(0)}%；只有極端機會模式才開放非槓桿 ETF 5 倍。不建議為追上目標一次買滿。`;
+    return `目前持倉 ${actual.toFixed(2)}% 低於 ARK ${target.toFixed(2)}%，缺口 ${gap.toFixed(2)}%，屬於${size}。${trendContext} ${marketContext} 結論：${actionText}，一般非槓桿 ETF 最高 4 倍、槓桿 ETF 最高 3 倍；今日依缺口與未來漲跌機率，預計填補約 ${(d._v2Plan?.dailyGapFillPercent || 0).toFixed(2)}% 配置缺口。只有極端機會模式才開放非槓桿 ETF 5 倍，不建議一次追滿。`;
   }
   const size =
     absoluteGap > 5 ? "明顯超配" : absoluteGap > 2 ? "中度超配" : "輕微超配";
@@ -3395,81 +3396,56 @@ function applyArkWaterLevelMultiplierPolicy(plan, input, d) {
       waterLevelMultiplierPolicy: "NONE",
     };
   }
-  let policy = "PREMIUM_FILTER_TWO_X";
-  scale = Math.max(scale, 2);
-  if (
-    state.value < 70 ||
-    (d.gap > CONFIG.defensiveAccumulationGap && state.direction === "FALLING")
-  ) {
-    scale = 1;
-    policy = "SIXTIES_BRAKE_ONE_X";
-  }
-  if (state.zone === "LOW" && state.direction === "FALLING") {
-    scale = Math.min(scale || 1, 1);
-    policy = "LOW_FALLING_MAX_ONE_X";
-  }
-  if (state.zone === "HIGH" && state.direction === "RISING") {
-    const span = Math.max(0.1, state.levels.max - state.levels.upperDecile);
-    const progress = clamp(
-      (state.value - state.levels.upperDecile) / span,
-      0,
-      1,
-    );
-    const highScale = 2 + progress;
-    scale = Math.max(scale, round(highScale, 2));
-    policy = "HIGH_RISING_ACCELERATE";
-  }
   const similar = input.similarTrendAnalysis,
     stats = similar?.stats,
-    gapBase =
-      d.gap > 15 ? 4 : d.gap > 10 ? 3 : d.gap > 5 ? 2 : d.gap > 1 ? 1 : 0;
-  let similarityAdjustment = 0;
-  if (stats) {
-    if (stats.market10.upRate >= 60 && stats.market10.average > 0)
-      similarityAdjustment += 1;
-    else if (stats.market10.upRate <= 40 && stats.market10.average < 0)
-      similarityAdjustment -= 1;
-    if (stats.risk10Average > 0 || stats.reaches85Rate >= 40)
-      similarityAdjustment += 0.5;
-    if (stats.risk10Average < 0 && stats.market10.average < 0)
-      similarityAdjustment -= 0.5;
+    gap = Math.max(0, Number(d.gap || 0)),
+    gapBase = gap <= CONFIG.deadBand
+      ? 0
+      : 1 + 3 * (1 - Math.exp(-(gap - CONFIG.deadBand) / 6)),
+    forecastUpRate = Number.isFinite(Number(stats?.combinedUpRate))
+      ? Number(stats.combinedUpRate)
+      : Number.isFinite(Number(stats?.market10?.upRate))
+        ? Number(stats.market10.upRate)
+        : 50,
+    forecastAdjustment = stats
+      ? clamp((forecastUpRate - 50) / 25, -1, 1)
+      : 0,
+    arkTrendAdjustment = clamp(Number(d.trend?.delta1D || 0) / 8, -0.4, 0.4);
+  scale = gapBase + forecastAdjustment + arkTrendAdjustment;
+  let policy = stats ? "SMOOTH_GAP_AND_FORECAST" : "SMOOTH_GAP";
+  if (state.value < 70) {
+    scale *= 0.75;
+    policy = "LOWER_WATER_LEVEL_SMOOTH_BRAKE";
   }
-  const defensiveBrake =
-    state.value < 70 ||
-    (d.gap > CONFIG.defensiveAccumulationGap && state.direction === "FALLING") ||
-    (state.zone === "LOW" && state.direction === "FALLING");
-  if (!defensiveBrake && gapBase > 0) {
-    scale = Math.max(scale, gapBase + similarityAdjustment);
-    policy = stats
-      ? "GAP_AND_SIMILAR_TREND_OPTIMAL"
-      : "GAP_BASED_OPTIMAL";
+  if (state.zone === "LOW" && state.direction === "FALLING") {
+    scale = Math.min(scale, 1);
+    policy = "LOW_FALLING_MAX_ONE_X";
   }
   const extremeMode = plan.buyMode === "EXTREME_DEPLOYMENT",
     multiplierCap = extremeMode
       ? CONFIG.maxBuyMultiplier
       : CONFIG.maxStandardBuyMultiplier,
-    gap = Math.max(0, Number(d.gap || 0)),
     suggestedCapital = Math.max(0, Number(input.arkSuggestedCapital || 0)),
+    dailyGapFillRate = clamp(
+      0.12 + gap * 0.006 + forecastAdjustment * 0.02,
+      0.1,
+      0.3,
+    ),
     dailyCapitalLimit =
       gap > 0
-        ? suggestedCapital * Math.min(1, CONFIG.maxDailyBuyPercent / gap)
-        : 0,
-    capitalScaleCap =
-      dailyCapitalLimit > 0 && plan.arkBaseTotal > 0
-        ? dailyCapitalLimit / plan.arkBaseTotal
-        : multiplierCap;
-  scale = Math.min(scale, multiplierCap, capitalScaleCap);
+        ? suggestedCapital * dailyGapFillRate
+        : 0;
+  if (extremeMode) scale = Math.max(scale, Number(plan.dynamicScale || 0));
+  scale = Math.min(scale, multiplierCap);
   if (!extremeMode && Number(plan.dynamicScale || 0) > multiplierCap)
     policy = "STANDARD_MAX_THREE_X";
-  if (capitalScaleCap < multiplierCap && capitalScaleCap < scale + 0.005)
-    policy = "DAILY_CAP_TWO_PERCENT";
   return {
     ...plan,
     dynamicScale: Math.floor(clamp(scale, 0, multiplierCap) * 100) / 100,
     dailyCapitalLimit: round(dailyCapitalLimit, 2),
     targetGapFillPercent: Math.min(
       Number(plan.targetGapFillPercent || 0),
-      CONFIG.maxDailyBuyPercent,
+      gap * dailyGapFillRate,
     ),
     waterLevelMultiplierPolicy: policy,
     similarTrendMultiplier: stats
@@ -3480,9 +3456,15 @@ function applyArkWaterLevelMultiplierPolicy(plan, input, d) {
           riskChange10D: stats.risk10Average,
           reaches85Rate: stats.reaches85Rate,
           gapBase,
-          adjustment: similarityAdjustment,
+          forecastUpRate,
+          forecastDownRate: 100 - forecastUpRate,
+          forecastAdjustment,
+          arkTrendAdjustment,
+          adjustment: forecastAdjustment + arkTrendAdjustment,
         }
       : null,
+    dailyGapFillRate,
+    dailyGapFillPercent: gap * dailyGapFillRate,
   };
 }
 function buildBuyV2Plan(input, d) {
@@ -3502,12 +3484,14 @@ function buildBuyV2Plan(input, d) {
     urgency: d.urgency,
   });
   const year = Number(String(date).slice(0, 4)) || new Date().getFullYear(),
+    month = Number(String(date).slice(5, 7)) || new Date().getMonth() + 1,
     similarTrendAnalysis = analyzeSimilarTrend(
       recordsWithCurrentMarket(
         window.centralRecords?.length ? window.centralRecords : SOURCE_RECORDS,
         input,
       ),
       year,
+      marketSeasonalityCache[month],
     );
   const adjusted = applyArkWaterLevelMultiplierPolicy(
     plan,
@@ -3569,7 +3553,7 @@ function renderBuyEngine(plan, input, d) {
     [
       "SIMILAR TREND BASIS",
       plan.similarTrendMultiplier
-        ? `10D 上漲 ${plan.similarTrendMultiplier.upRate10D.toFixed(0)}% · 調整 ${plan.similarTrendMultiplier.adjustment >= 0 ? "+" : ""}${plan.similarTrendMultiplier.adjustment.toFixed(1)}x`
+        ? `綜合上漲 ${plan.similarTrendMultiplier.forecastUpRate.toFixed(0)}%／下跌 ${plan.similarTrendMultiplier.forecastDownRate.toFixed(0)}% · 機率調整 ${plan.similarTrendMultiplier.forecastAdjustment >= 0 ? "+" : ""}${plan.similarTrendMultiplier.forecastAdjustment.toFixed(2)}x`
         : "資料不足，依缺口計算",
     ],
     [
@@ -4309,7 +4293,7 @@ function runSelfTests() {
       });
     return rows.at(-1).date === date && prediction.value === "HIGH";
   });
-  test("超大低配在一般水位只布局1倍", () => {
+  test("超大低配不因跨過20%門檻突然降至1倍", () => {
     const input = {
         todayArk: 66.8,
         actualAllocation: 20,
@@ -4331,9 +4315,9 @@ function runSelfTests() {
         input,
         d,
       );
-    return plan.dynamicScale === 1;
+    return plan.dynamicScale > 2.8;
   });
-  test("ARK離開6x水位後以2倍提高折溢價篩選涵蓋率", () => {
+  test("一般缺口依平滑曲線計算倍率", () => {
     const input = {
         todayArk: 72,
         actualAllocation: 65,
@@ -4355,7 +4339,7 @@ function runSelfTests() {
         input,
         d,
       );
-    return plan.dynamicScale === 2;
+    return plan.dynamicScale > 2.8 && plan.dynamicScale < 3;
   });
   test("ARK前10%高水位且大缺口會提高至4倍", () => {
     const input = {
@@ -4382,7 +4366,7 @@ function runSelfTests() {
       ).dynamicScale === 4
     );
   });
-  test("一般行情即使高水位續升也不超過3倍", () => {
+  test("小缺口即使高水位續升也不過度放大", () => {
     const input = {
         todayArk: 87.4,
         actualAllocation: 84.4,
@@ -4404,7 +4388,7 @@ function runSelfTests() {
         { dynamicScale: 1, arkBaseTotal: 1000 },
         input,
         d,
-      ).dynamicScale === 3
+      ).dynamicScale < 2.1
     );
   });
   test("只有極端機會模式可使用5倍", () => {
@@ -4436,7 +4420,7 @@ function runSelfTests() {
       ).dynamicScale === 5
     );
   });
-  test("每日買進金額不超過推算總資產2%", () => {
+  test("每日填補比例隨缺口平滑增加", () => {
     const input = {
         todayArk: 76,
         actualAllocation: 64,
@@ -4458,7 +4442,75 @@ function runSelfTests() {
         input,
         d,
       );
-    return plan.dynamicScale === 2 && plan.dailyCapitalLimit === 20000;
+    return (
+      plan.dynamicScale > 3.8 &&
+      plan.dailyCapitalLimit === 23040 &&
+      plan.dailyGapFillPercent > 2
+    );
+  });
+  test("相同條件下缺口越大倍率不會越低", () => {
+    const input = {
+        todayArk: 79,
+        arkSuggestedCapital: 100000,
+      },
+      makeDecision = (gap) => ({
+        action: "BUY",
+        gap,
+        trend: { delta1D: -1.3 },
+        waterLevelState: {
+          zone: "NORMAL",
+          direction: "FALLING",
+          value: 79,
+          levels: CONFIG.arkWaterLevels,
+        },
+      }),
+      smaller = applyArkWaterLevelMultiplierPolicy(
+        { dynamicScale: 1, arkBaseTotal: 4555 },
+        input,
+        makeDecision(19),
+      ),
+      larger = applyArkWaterLevelMultiplierPolicy(
+        { dynamicScale: 1, arkBaseTotal: 4555 },
+        input,
+        makeDecision(21.5),
+      );
+    return larger.dynamicScale >= smaller.dynamicScale;
+  });
+  test("未來上漲機率提高倍率、下跌機率降低倍率", () => {
+    const baseStats = {
+        market10: { upRate: 50, average: 0 },
+        risk10Average: 0,
+        reaches85Rate: 0,
+      },
+      input = {
+        todayArk: 79,
+        actualAllocation: 60,
+        arkSuggestedCapital: 100000,
+      },
+      decision = {
+        action: "BUY",
+        gap: 19,
+        trend: { delta1D: 0 },
+        waterLevelState: {
+          zone: "NORMAL",
+          direction: "FLAT",
+          value: 79,
+          levels: CONFIG.arkWaterLevels,
+        },
+      },
+      withProbability = (combinedUpRate) =>
+        applyArkWaterLevelMultiplierPolicy(
+          { dynamicScale: 1, arkBaseTotal: 4555 },
+          {
+            ...input,
+            similarTrendAnalysis: {
+              caseCount: 5,
+              stats: { ...baseStats, combinedUpRate },
+            },
+          },
+          decision,
+        ).dynamicScale;
+    return withProbability(70) > withProbability(50) && withProbability(50) > withProbability(30);
   });
   test("逐檔倍率會套用溢價折減與槓桿上限", () => {
     const plan = { dynamicScale: 4, gap: 14, buyMode: "ACCELERATED" };
