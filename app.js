@@ -2146,15 +2146,53 @@ function trendRmse(left, right) {
       left.length,
   );
 }
+function arkWaterRegime(value) {
+  if (value >= 75) return "HIGH";
+  if (value >= 60) return "MID";
+  return "LOW";
+}
+function trendDirection(value, threshold) {
+  if (value > threshold) return 1;
+  if (value < -threshold) return -1;
+  return 0;
+}
+function arkMarketRelationship(rows) {
+  const first = rows[0],
+    last = rows.at(-1),
+    arkChange = Number(last?.arkAllocation) - Number(first?.arkAllocation),
+    firstIndex = Number(first?.taiwanIndex),
+    lastIndex = Number(last?.taiwanIndex),
+    marketChange = firstIndex > 0 ? (lastIndex / firstIndex - 1) * 100 : 0;
+  return {
+    ark: trendDirection(arkChange, 0.5),
+    market: trendDirection(marketChange, 0.3),
+  };
+}
 function compareTrendWindows(current, candidate) {
   const keys = ["arkAllocation", "cnn", "taiwanIndex"],
     scores = Object.fromEntries(
       keys.map((key) => [key, trendRmse(trendVector(current, key), trendVector(candidate, key))]),
-    );
+    ),
+    currentWater = Number(current.at(-1)?.arkAllocation),
+    candidateWater = Number(candidate.at(-1)?.arkAllocation),
+    waterLevelDifference = Math.abs(currentWater - candidateWater),
+    currentRelationship = arkMarketRelationship(current),
+    candidateRelationship = arkMarketRelationship(candidate),
+    relationshipMismatch =
+      Number(currentRelationship.ark !== candidateRelationship.ark) +
+      Number(currentRelationship.market !== candidateRelationship.market),
+    waterLevelPenalty = Math.max(0, waterLevelDifference - 2) * 0.08,
+    relationshipPenalty = relationshipMismatch * 0.35;
   return {
     score:
-      scores.arkAllocation * 0.6 + scores.taiwanIndex * 0.3 + scores.cnn * 0.1,
+      scores.arkAllocation * 0.6 +
+      scores.taiwanIndex * 0.3 +
+      scores.cnn * 0.1 +
+      waterLevelPenalty +
+      relationshipPenalty,
     scores,
+    waterLevelDifference,
+    relationshipMismatch,
   };
 }
 const marketSeasonalityCache = {};
@@ -2195,7 +2233,16 @@ function analyzeSimilarTrend(records, year = new Date().getFullYear(), seasonali
   const candidates = [];
   for (let start = 0; start <= history.length - 15; start += 1) {
     const segment = history.slice(start, start + 15);
-    const comparison = compareTrendWindows(current, segment.slice(0, 5));
+    const candidateWindow = segment.slice(0, 5),
+      currentWater = current.at(-1).arkAllocation,
+      candidateWater = candidateWindow.at(-1).arkAllocation;
+    // 絕對水位代表不同的市場風險階段。高水位不可再與 60% 多的中水位互相比對。
+    if (
+      arkWaterRegime(currentWater) !== arkWaterRegime(candidateWater) ||
+      Math.abs(currentWater - candidateWater) > 8
+    )
+      continue;
+    const comparison = compareTrendWindows(current, candidateWindow);
     if (Number.isFinite(comparison.score))
       candidates.push({ ...comparison, segment, current, start });
   }
@@ -2512,7 +2559,7 @@ function renderSimilarTrendAnalysis(input = getInput()) {
   if (!result) {
     badge.textContent = "資料不足";
     badge.className = "badge warning";
-    summary.textContent = `需要 ${decisionYear} 年至少 50 筆完整資料，並且至少找到 3 個互不重疊的相似區間，才能建立情境統計。`;
+    summary.textContent = `需要 ${decisionYear} 年至少 50 筆完整資料，並且至少找到 3 個同風控區間、期末水位差不超過 8 個百分點的互不重疊案例，才能建立情境統計。`;
     phases.innerHTML = "";
     scenarioChart.innerHTML = '<p class="note">目前沒有足夠的獨立案例可建立綜合預測路徑。</p>';
     chart.innerHTML = '<p class="note">同步更多每日資料後會自動產生圖表。</p>';
@@ -2526,7 +2573,7 @@ function renderSimilarTrendAnalysis(input = getInput()) {
     seasonal = result.seasonality,
     upRate = result.stats.combinedUpRate,
     majority = upRate >= 60 ? "綜合偏多" : upRate <= 40 ? "綜合偏空" : "方向接近中性";
-  summary.textContent = `綜合預測採相似趨勢 80%＋歷年 ${decisionMonth} 月季節性 20%。上漲機率 ${upRate.toFixed(0)}%、下跌機率 ${result.stats.combinedDownRate.toFixed(0)}%，判讀為「${majority}」。相似案例後 10 日平均報酬 ${sign(s10.average)}；${seasonal ? `歷年 ${decisionMonth} 月共 ${seasonal.caseCount} 個樣本，平均月報酬 ${sign(Number(seasonal.averageReturn))}` : "同月歷史資料讀取中"}。統計是歷史推演，不代表未來保證。`;
+  summary.textContent = `相似案例須處於相同風控區間，且期末水位差不超過 8 個百分點；再依方舟 60%、大盤日漲跌 30%、CNN 10% 比對，方舟與大盤方向關係不同時會扣分。綜合預測採相似趨勢 80%＋歷年 ${decisionMonth} 月季節性 20%。上漲機率 ${upRate.toFixed(0)}%、下跌機率 ${result.stats.combinedDownRate.toFixed(0)}%，判讀為「${majority}」。相似案例後 10 日平均報酬 ${sign(s10.average)}；${seasonal ? `歷年 ${decisionMonth} 月共 ${seasonal.caseCount} 個樣本，平均月報酬 ${sign(Number(seasonal.averageReturn))}` : "同月歷史資料讀取中"}。統計是歷史推演，不代表未來保證。`;
   phases.innerHTML = `<div class="similar-phase active"><span>綜合漲跌機率</span><strong>上漲 ${upRate.toFixed(0)}% · 下跌 ${result.stats.combinedDownRate.toFixed(0)}%</strong><small>相似趨勢 80%＋同月季節性 20%</small></div><div class="similar-phase"><span>相似趨勢（後 10 日）</span><strong>上漲 ${s10.upRate.toFixed(0)}% · 平均 ${sign(s10.average)}</strong><small>${result.caseCount} 個案例；最高 ${sign(s10.max)} · 最低 ${sign(s10.min)}</small></div><div class="similar-phase"><span>歷年 ${decisionMonth} 月季節性</span><strong>${seasonal ? `上漲 ${Number(seasonal.upRate).toFixed(0)}% · 下跌 ${Number(seasonal.downRate).toFixed(0)}%` : "讀取中"}</strong><small>${seasonal ? `${seasonal.caseCount} 年樣本 · 平均 ${sign(Number(seasonal.averageReturn))}` : "由 Yahoo Finance 自動統計"}</small></div><div class="similar-phase"><span>風控水位情境</span><strong>升抵 85%：${result.stats.reaches85Rate.toFixed(0)}%</strong><small>後 10 日平均 ${sign(result.stats.risk10Average, " 個百分點")}</small></div>`;
   renderSimilarScenarioChart(result);
   renderSimilarTrendChart(result);
