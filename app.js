@@ -3451,8 +3451,13 @@ function renderArkLevelRecords() {
       value !== null && value !== "" && Number.isFinite(Number(value))
         ? `${Number(value).toFixed(1)}${suffix}`
         : "—",
+    isLowCnn = (row) => Number.isFinite(row.cnn) && row.cnn <= 25,
+    isLowMargin = (row) =>
+      Number.isFinite(row.marginMaintenance) && row.marginMaintenance <= 166,
+    isTripleSignal = (row) =>
+      row.arkAllocation >= 80 && isLowCnn(row) && isLowMargin(row),
     detailBlock = $("arkLevelRecords").querySelectorAll(".ark-research-block")[1];
-  detailBlock.innerHTML = `<div class="ark-level-title"><h3>極端水位日期明細</h3><div class="ark-level-filters"><label><input id="arkShowLow" type="checkbox" ${arkLevelFilterState.low ? "checked" : ""}> 顯示風控 65% 以下</label><label><input id="arkShowHigh" type="checkbox" ${arkLevelFilterState.high ? "checked" : ""}> 顯示風控 80% 以上</label></div></div><div class="ark-level-row ark-level-head"><span>日期</span><span>大盤指數</span><span>方舟持股</span><span>融資維持率</span><span>CNN</span></div>${levels.map((row) => `<div class="ark-level-row ${row.arkAllocation > highThreshold ? "level-high-row" : "level-low-row"}"><span>${formatDate(row.date)}</span><strong>${formatIndex(row.taiwanIndex)}</strong><strong class="${row.arkAllocation > highThreshold ? "level-high" : "level-low"}">${pct(row.arkAllocation, 1)}</strong><strong>${formatOptional(row.marginMaintenance, "%")}</strong><strong>${formatOptional(row.cnn)}</strong></div>`).join("") || `<p class="note">目前沒有符合已勾選條件的紀錄。</p>`}`;
+  detailBlock.innerHTML = `<div class="ark-level-title"><h3>極端水位日期明細</h3><div class="ark-level-filters"><label><input id="arkShowLow" type="checkbox" ${arkLevelFilterState.low ? "checked" : ""}> 顯示風控 65% 以下</label><label><input id="arkShowHigh" type="checkbox" ${arkLevelFilterState.high ? "checked" : ""}> 顯示風控 80% 以上</label></div></div><div class="ark-level-row ark-level-head"><span>日期</span><span>大盤指數</span><span>方舟持股</span><span>融資維持率</span><span>CNN</span></div>${levels.map((row) => `<div class="ark-level-row ${row.arkAllocation > highThreshold ? "level-high-row" : "level-low-row"} ${isTripleSignal(row) ? "triple-signal-row" : ""}"><span>${formatDate(row.date)}${isTripleSignal(row) ? '<em class="triple-signal-badge">三重訊號</em>' : ""}</span><strong>${formatIndex(row.taiwanIndex)}</strong><strong class="${row.arkAllocation > highThreshold ? "level-high" : "level-low"}">${pct(row.arkAllocation, 1)}</strong><strong class="${isLowMargin(row) ? "risk-alert" : ""}">${formatOptional(row.marginMaintenance, "%")}</strong><strong class="${isLowCnn(row) ? "risk-alert" : ""}">${formatOptional(row.cnn)}</strong></div>`).join("") || `<p class="note">目前沒有符合已勾選條件的紀錄。</p>`}`;
   $("arkShowLow")?.addEventListener("change", (event) => {
     arkLevelFilterState.low = event.target.checked;
     renderArkLevelRecords();
