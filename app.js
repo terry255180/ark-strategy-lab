@@ -3226,17 +3226,27 @@ function getAnnualArkRecords(
       ...row,
       arkAllocation: Number(row.arkAllocation),
       taiwanIndex: Number(row.taiwanIndex),
+      marginMaintenance:
+        row.marginMaintenance !== "" &&
+        row.marginMaintenance !== null &&
+        Number.isFinite(Number(row.marginMaintenance))
+          ? Number(row.marginMaintenance)
+          : null,
+      cnn:
+        row.cnn !== "" && row.cnn !== null && Number.isFinite(Number(row.cnn))
+          ? Number(row.cnn)
+          : null,
     }))
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 function getAnnualArkLevelRecords(
   records,
   year,
-  high = CONFIG.arkWaterLevels.upperDecile,
-  low = CONFIG.arkWaterLevels.lowerDecile,
+  high = 80,
+  low = 65,
 ) {
   return getAnnualArkRecords(records, year)
-    .filter((row) => row.arkAllocation >= high || row.arkAllocation <= low)
+    .filter((row) => row.arkAllocation > high || row.arkAllocation < low)
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 function calculateForwardIndexMetrics(records, entryDate, horizon = 40) {
@@ -3379,26 +3389,35 @@ const formatIndex = (value) =>
     : "—";
 const formatDate = (value) =>
   value ? String(value).replaceAll("-", "/") : "尚未離開";
+const arkLevelFilterState = { low: true, high: true };
 function renderArkLevelRecords() {
-  const water = CONFIG.arkWaterLevels;
+  const highThreshold = 80,
+    lowThreshold = 65,
+    water = {
+      upperDecile: highThreshold,
+      lowerDecile: lowThreshold,
+      year: new Date().getFullYear(),
+    };
   const year = Number(
       new Date()
         .toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" })
         .slice(0, 4),
     ),
     annual = getAnnualArkRecords(window.centralRecords || [], year),
-    levels = getAnnualArkLevelRecords(
-      annual,
-      year,
-      water.upperDecile,
-      water.lowerDecile,
+    allLevels = getAnnualArkLevelRecords(annual, year, highThreshold, lowThreshold),
+    levels = allLevels.filter((row) =>
+      row.arkAllocation > highThreshold
+        ? arkLevelFilterState.high
+        : arkLevelFilterState.low,
     ),
     values = annual.map((row) => row.arkAllocation),
-    events = buildArkLevelEvents(annual, water.upperDecile, water.lowerDecile),
+    events = buildArkLevelEvents(annual, highThreshold, lowThreshold),
     highSummary = summarizeArkEvents(events, "HIGH"),
-    lowSummary = summarizeArkEvents(events, "LOW");
+    lowSummary = summarizeArkEvents(events, "LOW"),
+    highCount = allLevels.filter((row) => row.arkAllocation > highThreshold).length,
+    lowCount = allLevels.length - highCount;
   $("arkLevelCount").textContent =
-    `${levels.length} 筆 · ${events.length} 個事件`;
+    `${levels.length} 筆顯示 · 高 ${highCount}／低 ${lowCount}`;
   if (!annual.length) {
     $("arkLevelRecords").innerHTML =
       `<p class="note">${year} 年目前沒有可分析的方舟水位紀錄。</p>`;
@@ -3428,6 +3447,20 @@ function renderArkLevelRecords() {
         )
         .join("") || `<p class="note">目前尚未形成極端水位事件。</p>`
     }</div><p class="research-warning">報酬以事件進入日的大盤指數為基準，5／10／20／40日均指後續交易日；最大回撤計算進入日起最長40個交易日內，任一期間高點至其後低點的最大跌幅。資料未滿40日會標示「截至最新」。${water.year} 年策略分界：前 10% 為 ${water.upperDecile}%、後 10% 為 ${water.lowerDecile}%。歷史規律仍不能單獨視為買賣訊號。</p></section>`;
+  const formatOptional = (value, suffix = "") =>
+      value !== null && value !== "" && Number.isFinite(Number(value))
+        ? `${Number(value).toFixed(1)}${suffix}`
+        : "—",
+    detailBlock = $("arkLevelRecords").querySelectorAll(".ark-research-block")[1];
+  detailBlock.innerHTML = `<div class="ark-level-title"><h3>極端水位日期明細</h3><div class="ark-level-filters"><label><input id="arkShowLow" type="checkbox" ${arkLevelFilterState.low ? "checked" : ""}> 顯示風控 65% 以下</label><label><input id="arkShowHigh" type="checkbox" ${arkLevelFilterState.high ? "checked" : ""}> 顯示風控 80% 以上</label></div></div><div class="ark-level-row ark-level-head"><span>日期</span><span>大盤指數</span><span>方舟持股</span><span>融資維持率</span><span>CNN</span></div>${levels.map((row) => `<div class="ark-level-row ${row.arkAllocation > highThreshold ? "level-high-row" : "level-low-row"}"><span>${formatDate(row.date)}</span><strong>${formatIndex(row.taiwanIndex)}</strong><strong class="${row.arkAllocation > highThreshold ? "level-high" : "level-low"}">${pct(row.arkAllocation, 1)}</strong><strong>${formatOptional(row.marginMaintenance, "%")}</strong><strong>${formatOptional(row.cnn)}</strong></div>`).join("") || `<p class="note">目前沒有符合已勾選條件的紀錄。</p>`}`;
+  $("arkShowLow")?.addEventListener("change", (event) => {
+    arkLevelFilterState.low = event.target.checked;
+    renderArkLevelRecords();
+  });
+  $("arkShowHigh")?.addEventListener("change", (event) => {
+    arkLevelFilterState.high = event.target.checked;
+    renderArkLevelRecords();
+  });
 }
 function applyArkWaterLevelMultiplierPolicy(plan, input, d) {
   let scale = Math.max(0, Number(plan.dynamicScale || 0));
@@ -4132,12 +4165,13 @@ function runSelfTests() {
       actualAllocation: 20,
       arkHistory: [81, 80, 79, 78, 77, 77],
     }).regime === "WATCH");
-  test("年度方舟水位只保留 80.3% 以上與 64.3% 以下", () => {
+  test("年度方舟水位只保留高於 80% 與低於 65%", () => {
     const rows = getAnnualArkLevelRecords(
       [
-        { date: "2026-01-01", arkAllocation: 80.3 },
-        { date: "2026-01-02", arkAllocation: 70 },
-        { date: "2026-01-03", arkAllocation: 64.3 },
+        { date: "2026-01-01", arkAllocation: 80.1 },
+        { date: "2026-01-02", arkAllocation: 80 },
+        { date: "2026-01-03", arkAllocation: 65 },
+        { date: "2026-01-04", arkAllocation: 64.9 },
       ],
       2026,
     );
