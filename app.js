@@ -2113,13 +2113,13 @@ function renderSparkline(input = getInput()) {
   const bars = records
     .map(
       (row, i) =>
-        `<rect class="index-bar-chart" x="${x(i) - barWidth / 2}" y="${yIndex(index[i])}" width="${barWidth}" height="${h - bottom - yIndex(index[i])}"><title>${row.date}｜加權指數 ${index[i].toLocaleString("zh-TW")}</title></rect>`,
+        `<rect class="index-bar-chart" x="${x(i) - barWidth / 2}" y="${yIndex(index[i])}" width="${barWidth}" height="${h - bottom - yIndex(index[i])}"><title>${row.date}｜加權指數 ${index[i].toLocaleString("zh-TW")}</title></rect><text class="index-value-label" x="${x(i)}" y="${h - bottom - 7}" text-anchor="middle">${Math.round(index[i]).toLocaleString("zh-TW")}</text>`,
     )
     .join("");
   const dots = records
     .map(
       (row, i) =>
-        `<circle cx="${x(i)}" cy="${yArk(ark[i])}" r="3" fill="#36d6e7"><title>${row.date}｜ARK ${ark[i].toFixed(1)}%</title></circle>`,
+        `<circle cx="${x(i)}" cy="${yArk(ark[i])}" r="3" fill="#36d6e7"><title>${row.date}｜ARK ${ark[i].toFixed(1)}%</title></circle><text class="ark-value-label" x="${x(i)}" y="${yArk(ark[i]) < top + 13 ? yArk(ark[i]) + 15 : yArk(ark[i]) - 8}" text-anchor="middle">${ark[i].toFixed(1)}%</text>`,
     )
     .join("");
   $("sparkline").innerHTML =
