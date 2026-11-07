@@ -2608,7 +2608,7 @@ function decisionReasons(input, d) {
     );
   if (extremeMode)
     r.push(
-      `今日進入極端機會模式（${Number(plan.extremeScore || 0).toFixed(2)}／9 分），非槓桿 ETF 才開放最高 5 倍；5 倍是 ETF 位階倍率。本日依實際建議金額回算，約填補 ${actualGapFillPercent.toFixed(2)} 個百分點、占剩餘缺口 ${gapFillShare.toFixed(0)}%，隔日會依最新配置重新計算。`,
+      `今日進入極端機會模式（${Number(plan.extremeScore || 0).toFixed(2)}／9 分），5 倍只代表單檔位階上限；總投入另受每日缺口保護。本日${plan.tripleExtremeSignal ? "同時符合 CNN≤25、方舟水位≥80% 與融資維持率≤166%，上限放寬為" : "未同時符合三重極端訊號，上限為"}剩餘缺口的 ${(Number(plan.dailyGapFillCapRate || 0.25) * 100).toFixed(0)}%。依實際建議金額回算，約填補 ${actualGapFillPercent.toFixed(2)} 個百分點、占剩餘缺口 ${gapFillShare.toFixed(0)}%，隔日再依最新缺口遞減計算。`,
     );
   else if (water.zone === "HIGH" && water.direction === "RISING")
     r.push(
@@ -3596,8 +3596,60 @@ function buildBuyV2Plan(input, d) {
     { ...input, similarTrendAnalysis },
     d,
   ),
-    effectiveExecution = adjusted.orders.reduce((sum, item) => {
-      const recommendation = calculateEtfRecommendedMultiplier(item, adjusted);
+    tripleExtremeSignal =
+      String($("cnn")?.value ?? "").trim() !== "" &&
+      Number(input.cnn) >= 0 &&
+      Number(input.cnn) <= 25 &&
+      Number(input.todayArk) >= 80 &&
+      Number(input.margin) > 0 &&
+      Number(input.margin) <= 166,
+    dailyGapFillCapRate =
+      adjusted.buyMode === "EXTREME_DEPLOYMENT"
+        ? tripleExtremeSignal
+          ? 0.3
+          : 0.25
+        : Math.min(Number(adjusted.dailyGapFillRate || 0.2), 0.25),
+    executionCapAmount = Math.max(
+      0,
+      Number(input.arkSuggestedCapital || 0) * dailyGapFillCapRate,
+    ),
+    executionAtScale = (scale) => {
+      const scaledPlan = { ...adjusted, dynamicScale: scale };
+      return adjusted.orders.reduce((sum, item) => {
+        const recommendation = calculateEtfRecommendedMultiplier(
+          item,
+          scaledPlan,
+        );
+        return (
+          sum +
+          Math.max(0, Number(item.positionAmount) || 0) *
+            recommendation.multiplier
+        );
+      }, 0);
+    };
+  let cappedScale = Number(adjusted.dynamicScale || 0),
+    uncappedExecution = executionAtScale(cappedScale);
+  if (executionCapAmount > 0 && uncappedExecution > executionCapAmount) {
+    let low = 0,
+      high = cappedScale;
+    for (let iteration = 0; iteration < 24; iteration += 1) {
+      const middle = (low + high) / 2;
+      if (executionAtScale(middle) <= executionCapAmount) low = middle;
+      else high = middle;
+    }
+    cappedScale = Math.floor(low * 100) / 100;
+  }
+  const cappedPlan = {
+      ...adjusted,
+      dynamicScale: cappedScale,
+      uncappedDynamicScale: Number(adjusted.dynamicScale || 0),
+      dailyGapFillCapRate,
+      executionCapAmount: round(executionCapAmount, 2),
+      tripleExtremeSignal,
+      executionWasCapped: cappedScale < Number(adjusted.dynamicScale || 0),
+    },
+    effectiveExecution = cappedPlan.orders.reduce((sum, item) => {
+      const recommendation = calculateEtfRecommendedMultiplier(item, cappedPlan);
       return (
         sum +
         Math.max(0, Number(item.positionAmount) || 0) *
@@ -3605,10 +3657,10 @@ function buildBuyV2Plan(input, d) {
       );
     }, 0);
   return {
-    ...adjusted,
+    ...cappedPlan,
     effectiveExecution: round(effectiveExecution, 2),
     pendingCapital: round(
-      Math.max(0, adjusted.theoreticalExecution - effectiveExecution),
+      Math.max(0, cappedPlan.theoreticalExecution - effectiveExecution),
       2,
     ),
   };
@@ -3650,6 +3702,10 @@ function renderBuyEngine(plan, input, d) {
     ["MARKET FACTOR", `×${plan.marketFactor.toFixed(2)}`],
     ["TARGET GAP FILL", `${plan.targetGapFillPercent.toFixed(2)}%`],
     ["DYNAMIC SCALE", `×${plan.dynamicScale.toFixed(2)}`],
+    [
+      "DAILY GAP CAP",
+      `${(Number(plan.dailyGapFillCapRate || 0) * 100).toFixed(0)}% · NT$ ${Math.round(plan.executionCapAmount || 0).toLocaleString("zh-TW")}`,
+    ],
     [
       "SIMILAR TREND BASIS",
       plan.similarTrendMultiplier
@@ -3809,7 +3865,7 @@ function renderDashboard() {
   $("executionSpeed").textContent =
     d.action === "BUY"
       ? plan.buyMode === "EXTREME_DEPLOYMENT"
-        ? `極端機會 ${Number(plan.extremeScore || 0).toFixed(2)}／9 分：非槓桿最高 ${Math.min(positionExecution.multiplier, 5).toFixed(2)} 倍，槓桿最高 3 倍；依實際執行金額回算填補比例`
+        ? `極端機會 ${Number(plan.extremeScore || 0).toFixed(2)}／9 分：倍率上限 ×5；今日實際倍率 ×${positionExecution.multiplier.toFixed(2)}，總投入上限為剩餘缺口的 ${(Number(plan.dailyGapFillCapRate || 0.25) * 100).toFixed(0)}%`
         : `依缺口＋相似趨勢：一般最高 ${Math.min(positionExecution.multiplier, 4).toFixed(2)} 倍，槓桿最高 3 倍`
       : d.action === "SELL"
         ? `賣出超額部位的 ${(d.rate * 100).toFixed(0)}%`
