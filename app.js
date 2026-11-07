@@ -3604,9 +3604,11 @@ function renderExecutionBuffer(plan) {
   return `Execution Buffer：本次待累積 NT$ ${Math.round(plan.pendingCapital).toLocaleString("zh-TW")}；只累積資金，隔日依最新 ARK 權重重新分配。`;
 }
 function renderExtremeMode(plan) {
+  const factors = plan.extremeFactors || {},
+    breakdown = `CNN ${Number(factors.cnn || 0).toFixed(2)}＋方舟水位 ${Number(factors.arkLevel || 0).toFixed(2)}＋水位轉折 ${Number(factors.arkTurn || 0).toFixed(2)}＋融資 ${Number(factors.margin || 0).toFixed(2)}`;
   return plan.buyMode === "EXTREME_DEPLOYMENT"
-    ? `極端機會分數 ${plan.extremeScore}/9；riskAmount 只作為單檔上限，仍受溢價、集中度與取整限制。`
-    : `極端機會分數 ${plan.extremeScore}/9，未進入 Extreme Deployment。`;
+    ? `極端機會分數 ${plan.extremeScore}/9（${breakdown}）；分數越高，缺口填補與溢價容忍度越高，riskAmount 仍是單檔上限。`
+    : `極端機會分數 ${plan.extremeScore}/9（${breakdown}），未達 4 分。`;
 }
 function renderDecisionExplanation(plan, input, d) {
   const modeZh = {
@@ -3671,9 +3673,16 @@ function calculateEtfRecommendedMultiplier(item, plan) {
     premium = Number(item?.premiumPercent ?? item?.premium ?? 0);
   let factor = 1,
     reason = premium <= 0 ? "折價／淨值內完整布局" : "小幅溢價完整布局";
+  const extremeMode = plan?.buyMode === "EXTREME_DEPLOYMENT";
   if (premium > 1) {
     factor = 0;
     reason = "溢價超過 1%，等待淨值";
+  } else if (extremeMode && premium > 0.3) {
+    factor = window.BuyEngineV2.calculateExtremePremiumFactor(
+      premium,
+      plan.extremeScore,
+    );
+    reason = `極端模式依分數放寬溢價限制（保留 ${(factor * 100).toFixed(0)}% 倍率）`;
   } else if (premium > 0.5) {
     factor = Number(plan?.gap || 0) > 10 ? 0.25 : 0;
     reason = factor ? "缺口較大，僅布局四分之一" : "溢價偏高，等待淨值";
