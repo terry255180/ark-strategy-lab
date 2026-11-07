@@ -2581,7 +2581,12 @@ function renderSimilarTrendAnalysis(input = getInput()) {
 function decisionReasons(input, d) {
   const r = [],
     water = d.waterLevelState || arkWaterLevelState(input, d),
-    levels = water.levels;
+    levels = water.levels,
+    plan = d._v2Plan,
+    extremeMode = plan?.buyMode === "EXTREME_DEPLOYMENT",
+    gapFillShare = d.gap > 0
+      ? (Number(plan?.targetGapFillPercent || 0) / d.gap) * 100
+      : 0;
   r.push(
     `實際配置比 ARK 目標${d.gap >= 0 ? "低" : "高"} ${Math.abs(d.gap).toFixed(2)}%。`,
   );
@@ -2597,7 +2602,11 @@ function decisionReasons(input, d) {
     r.push(
       `當下加權指數 ${input.currentTaiwanIndex.toLocaleString("zh-TW", { maximumFractionDigits: 2 })} 點，市場位置判定為「${input.marketPrediction?.label || "區間震盪"}」，已納入今日布局／調節速度。`,
     );
-  if (water.zone === "HIGH" && water.direction === "RISING")
+  if (extremeMode)
+    r.push(
+      `今日進入極端機會模式（${Number(plan.extremeScore || 0).toFixed(2)}／9 分），非槓桿 ETF 才開放最高 5 倍；5 倍是 ETF 位階倍率，不是一次補滿缺口。本日預計填補 ${Number(plan.targetGapFillPercent || 0).toFixed(2)} 個百分點，約占剩餘缺口的 ${gapFillShare.toFixed(0)}%，每日仍以 30% 缺口填補為上限並於隔日重新計算。`,
+    );
+  else if (water.zone === "HIGH" && water.direction === "RISING")
     r.push(
       `ARK 已進入今年前 10% 高水位（≥${levels.upperDecile}%）且持續上升，代表模型提高風險承擔；一般非槓桿 ETF 最高 4 倍、槓桿 ETF 最高 3 倍，只有極端機會模式才開放非槓桿 ETF 5 倍，這個區間不賣股票。`,
     );
@@ -3749,7 +3758,9 @@ function renderDashboard() {
         : "今日不交易";
   $("speedValue").textContent =
     d.action === "BUY"
-      ? `一般 ×${Math.min(positionExecution.multiplier, 4).toFixed(2)} · 槓桿最高 ×3`
+      ? plan.buyMode === "EXTREME_DEPLOYMENT"
+        ? `極端 ×${Math.min(positionExecution.multiplier, 5).toFixed(2)} · 槓桿最高 ×3`
+        : `一般 ×${Math.min(positionExecution.multiplier, 4).toFixed(2)} · 槓桿最高 ×3`
       : d.action === "SELL"
         ? `賣出超額部位的 ${(d.rate * 100).toFixed(0)}%`
         : "0";
@@ -3757,7 +3768,7 @@ function renderDashboard() {
     d.action === "SELL"
       ? `預計降低 ${reduction.toFixed(2)}% · ${input.actualAllocation.toFixed(2)}% → ${d.target.toFixed(2)}%`
       : d.action === "BUY"
-        ? `今日填補約 ${plan.targetGapFillPercent.toFixed(2)}% 配置缺口`
+        ? `${plan.buyMode === "EXTREME_DEPLOYMENT" ? "極端模式 · " : ""}今日填補 ${plan.targetGapFillPercent.toFixed(2)} 個百分點（剩餘缺口的 ${d.gap > 0 ? ((plan.targetGapFillPercent / d.gap) * 100).toFixed(0) : "0"}%）`
         : pct(d.target, 2);
   $("targetCapital").textContent =
     d.action === "BUY"
@@ -3771,7 +3782,9 @@ function renderDashboard() {
         : "—";
   $("executionSpeed").textContent =
     d.action === "BUY"
-      ? `依缺口＋相似趨勢：一般最高 ${Math.min(positionExecution.multiplier, 4).toFixed(2)} 倍，槓桿最高 3 倍`
+      ? plan.buyMode === "EXTREME_DEPLOYMENT"
+        ? `極端機會 ${Number(plan.extremeScore || 0).toFixed(2)}／9 分：非槓桿最高 ${Math.min(positionExecution.multiplier, 5).toFixed(2)} 倍，槓桿最高 3 倍；本日最多填補剩餘缺口 30%`
+        : `依缺口＋相似趨勢：一般最高 ${Math.min(positionExecution.multiplier, 4).toFixed(2)} 倍，槓桿最高 3 倍`
       : d.action === "SELL"
         ? `賣出超額部位的 ${(d.rate * 100).toFixed(0)}%`
         : "不交易";
