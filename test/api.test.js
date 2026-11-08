@@ -20,6 +20,11 @@ test("Gemini ETF 結果會校正代號並合併",()=>{
   assert.equal(rows.length,1);assert.equal(rows[0].symbol,"00631L");assert.equal(rows[0].positionShares,1000);
 });
 
+test("新版 ETF 代號會補上中文名稱",()=>{
+  const rows=normalizeArkItems([{symbol:"00678",name:""},{symbol:"009802",name:""},{symbol:"00646",name:""}]);
+  assert.deepEqual(rows.map(row=>row.name),["群益那斯達克生技","富邦旗艦50","元大S&P500"]);
+});
+
 test("持股 OCR 只保留名稱、代號、股數與總成本",()=>{
   const rows=normalizeHoldingItems([{symbol:"O050",name:"元大台灣50",shares:"100",costBasis:"15000",currentPrice:200,marketValue:20000}]);
   assert.deepEqual(rows,[{symbol:"0050",name:"元大台灣50",shares:100,costBasis:15000}]);

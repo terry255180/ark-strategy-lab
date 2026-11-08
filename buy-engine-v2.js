@@ -35,6 +35,13 @@ const ETF_MASTER=Object.freeze({
   ,"00878":{name:"國泰永續高股息",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_DIVIDEND",leveraged:false}
   ,"00938":{name:"凱基優選30",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_DIVIDEND",leveraged:false}
   ,"00701":{name:"國泰股利精選30",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_DIVIDEND",leveraged:false}
+  ,"00678":{name:"群益那斯達克生技",marketRegion:"US",assetType:"US_EQUITY",exposureGroup:"GLOBAL_HEALTHCARE",leveraged:false}
+  ,"00886":{name:"永豐美國科技",marketRegion:"US",assetType:"US_EQUITY",exposureGroup:"GLOBAL_TECH",leveraged:false}
+  ,"00926":{name:"凱基全球菁英55",marketRegion:"GLOBAL",assetType:"GLOBAL_EQUITY",exposureGroup:"GLOBAL_LARGE_CAP",leveraged:false}
+  ,"009802":{name:"富邦旗艦50",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_LARGE_CAP",leveraged:false}
+  ,"00921":{name:"兆豐龍頭等權重",marketRegion:"TW",assetType:"TAIWAN_EQUITY",exposureGroup:"TAIWAN_LARGE_CAP",leveraged:false}
+  ,"00949":{name:"復華日本龍頭",marketRegion:"JP",assetType:"GLOBAL_EQUITY",exposureGroup:"JAPAN_EQUITY",leveraged:false}
+  ,"00646":{name:"元大S&P500",marketRegion:"US",assetType:"US_EQUITY",exposureGroup:"US_LARGE_CAP",leveraged:false}
 });
 const fieldAliases={premiumPercent:["premiumPercent","premium"],positionShares:["positionShares","arkShares"],positionAmount:["positionAmount","positionCapital"]};
 function value(row,key){for(const k of fieldAliases[key]||[key])if(row[k]!==undefined)return finite(row[k]);return null;}

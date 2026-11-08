@@ -1944,7 +1944,14 @@ async function applyOcrRows() {
       ...old,
       ...meta,
       symbol: row.symbol,
-      name: meta.name || old.name || "",
+      // Unknown/new ETFs are not necessarily in ETF_MASTER. Keep the Chinese
+      // name returned by Gemini instead of dropping it while applying rows.
+      name:
+        meta.name ||
+        String(row.name || "").trim() ||
+        old.name ||
+        ETF_NAME_BY_SYMBOL[row.symbol] ||
+        "",
       nav: row.nav,
       premium: row.premiumPercent,
       arkShares: row.positionShares,
