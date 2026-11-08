@@ -696,30 +696,74 @@ async function extractWithGeminiVision(
   action = "vision",
   tokenInputId = "visionAccessToken",
 ) {
-  const endpoint =
-      CONFIG.imageImport.visionEndpoint || CONFIG.googleSheets?.webAppUrl,
+  const endpoints = [
+      CONFIG.imageImport.visionEndpoint,
+      CONFIG.googleSheets?.webAppUrl,
+    ].filter((endpoint, index, all) => endpoint && all.indexOf(endpoint) === index),
     token = $(tokenInputId)?.value.trim() || $("visionAccessToken")?.value.trim();
-  if (!endpoint) throw new Error("尚未設定 Gemini Vercel API");
+  if (!endpoints.length) throw new Error("尚未設定 Gemini 辨識端點");
   if (!token) throw new Error("請先輸入 AI 辨識密碼");
   const imageFiles = images || [],
     maxImageBytes = Math.min(850000, Math.floor(3000000 / Math.max(1, imageFiles.length))),
     payloadImages = await Promise.all(
       imageFiles.map((file) => fileToBase64Payload(file, maxImageBytes)),
     ),
-    response = await fetch(endpoint, {
-      method: "POST",
-      redirect: "follow",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action, token, images: payloadImages }),
-    });
-  if (!response.ok) throw new Error(`Gemini 服務 HTTP ${response.status}`);
-  const payload = await response.json();
-  if (!payload.ok) throw new Error(payload.error || "Gemini 圖片辨識失敗");
-  return {
-    detectedRows: (payload.items || []).length,
-    items: payload.items || [],
-    provider: payload.provider || "gemini",
-  };
+    requestBody = JSON.stringify({ action, token, images: payloadImages });
+  const errors = [];
+  for (const endpoint of endpoints) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const controller = new AbortController(),
+        timeout = setTimeout(() => controller.abort(), 55000);
+      try {
+        const response = await fetch(endpoint, {
+            method: "POST",
+            redirect: "follow",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: requestBody,
+            signal: controller.signal,
+          }),
+          text = await response.text();
+        let payload;
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          throw new Error(
+            `辨識服務回傳非 JSON（HTTP ${response.status}）`,
+          );
+        }
+        if (!response.ok || !payload.ok)
+          throw new Error(
+            payload.error || `Gemini 服務 HTTP ${response.status}`,
+          );
+        return {
+          detectedRows: (payload.items || []).length,
+          items: payload.items || [],
+          provider:
+            payload.provider ||
+            (endpoint === CONFIG.googleSheets?.webAppUrl
+              ? "gemini-apps-script"
+              : "gemini-vercel"),
+        };
+      } catch (error) {
+        const message =
+          error?.name === "AbortError"
+            ? "請求逾時"
+            : String(error?.message || error);
+        errors.push(
+          `${endpoint === CONFIG.googleSheets?.webAppUrl ? "Apps Script" : "Vercel"}${attempt > 1 ? `重試${attempt}` : ""}：${message}`,
+        );
+        const retryable =
+          error?.name === "AbortError" ||
+          /load failed|failed to fetch|network|http 429|http 5\d\d/i.test(
+            message,
+          );
+        if (!retryable) break;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+  }
+  throw new Error(errors.join("；").slice(0, 500));
 }
 window.geminiVisionExtractor = (images) => extractWithGeminiVision(images);
 window.geminiRebalanceVisionExtractor = (images) =>
@@ -1605,16 +1649,17 @@ async function recognizeArkScreenshots() {
       "OCR 無法在直接開啟的 file:// 網頁運作。請關閉本頁，改為雙擊「啟動網站.cmd」。";
     return;
   }
-  if (!ocrFiles.length || !window.Tesseract) {
+  if (!ocrFiles.length) {
     $("ocrStatus").textContent =
-      "OCR 引擎未成功載入，請確認 vendor/tesseract 資料夾已上傳。";
+      "請先選擇要辨識的截圖。";
     return;
   }
   $("runOcrBtn").disabled = true;
   $("ocrProgress").hidden = false;
   $("ocrProgressBar").style.width = "2%";
   $("ocrStatus").textContent = "正在載入本機辨識模型…";
-  let worker;
+  let worker,
+    visionFailure = "";
   try {
     const configuredVision =
       (CONFIG.imageImport.provider === "OpenAIVisionProvider" &&
@@ -1641,10 +1686,13 @@ async function recognizeArkScreenshots() {
         return;
       } catch (visionError) {
         console.warn("Gemini Vision fallback", visionError);
+        visionFailure = String(visionError?.message || visionError);
         $("ocrStatus").textContent =
-          `Gemini 暫時無法使用（${String(visionError?.message || visionError).slice(0, 80)}），正在改用本機 OCR…`;
+          `Gemini 暫時無法使用（${visionFailure.slice(0, 120)}），正在改用本機 OCR…`;
       }
     }
+    if (!window.Tesseract)
+      throw new Error("本機 OCR 引擎未成功載入");
     const mobile = isMobileOcrDevice(),
       languages = ["chi_tra", "eng"];
     worker = await Tesseract.createWorker(languages, Tesseract.OEM.LSTM_ONLY, {
@@ -1795,12 +1843,15 @@ async function recognizeArkScreenshots() {
       : "未找到 ETF 代號，請改用清晰、未裁掉代號的截圖。";
   } catch (error) {
     console.error(error);
-    const message = String(error?.message || error || "");
-    const hint = /worker|fetch|network|load/i.test(message)
-      ? "請確認是由 GitHub Pages 或「啟動網站.cmd」開啟，並確認 vendor/tesseract 已上傳。"
-      : "請重新選擇清晰截圖。";
+    const message = String(error?.message || error || ""),
+      geminiDetail = visionFailure
+        ? `Gemini：${visionFailure.slice(0, 180)}；`
+        : "",
+      hint = /worker|fetch|network|load/i.test(message)
+        ? "本機 OCR 模型也載入失敗，請檢查網路後重試。"
+        : "請重新選擇清晰截圖。";
     $("ocrStatus").textContent =
-      `辨識失敗。${hint}${message ? ` （${message.slice(0, 120)}）` : ""}`;
+      `辨識失敗。${geminiDetail}${hint}${message ? `（本機 OCR：${message.slice(0, 120)}）` : ""}`;
   } finally {
     if (worker) await worker.terminate();
     $("runOcrBtn").disabled = !ocrFiles.length;
