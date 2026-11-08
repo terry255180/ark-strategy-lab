@@ -190,7 +190,12 @@ function saveRebalanceSnapshot(plan){
   const date=new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Taipei"});const key=C.storageKeys.history;
   let history=[];try{history=JSON.parse(localStorage.getItem(key)||"[]");}catch{}if(!Array.isArray(history))history=[];
   const snap={date,strategyVersion:C.strategyVersion,parameterStatus:C.status,targetReduction:plan.target,actualReduction:plan.primary.actualReduction,arkTarget:plan.input.todayArk,actualAllocation:plan.input.actualAllocation,sellRegime:plan.decision.regime,twMarketRegime:plan.markets.tw.label,twSellFactor:plan.markets.tw.factor,usMarketRegime:plan.markets.us.label,usSellFactor:plan.markets.us.factor,CNN:plan.input.cnn,TW_RSI:plan.twMetrics.rsi,TW_Bias20D:plan.twMetrics.bias,TW_Percentile20D:plan.twMetrics.percentile,soldHoldings:plan.primary.soldHoldings.map(x=>({symbol:x.symbol,shares:x.sellShares,sellAmount:x.sellAmount,sellPriority:x.sellPriorityScore,sellReasons:x.sellReasons,inArkToday:x.inArkToday,daysOutOfArk:x.daysOutOfArk,arkPresence5D:x.arkPresence5D,profitPercent:x.profitPercent,singleWeight:x.singleWeight,groupWeight:x.groupWeight,marketRegion:x.marketRegion,marketSellFactor:x.marketFactor,return5D:null,return10D:null,return20D:null,sellOpportunityCost:null}))};
-  history.push(snap);localStorage.setItem(key,JSON.stringify(history.slice(-100)));return snap;
+  history.push(snap);localStorage.setItem(key,JSON.stringify(history.slice(-100)));
+  if(plan.primary.actualReduction>0&&plan.decision?.strategy?.mode){
+    const matchedIndex=(window.centralRecords||[]).findIndex(row=>String(row.date).slice(0,10)===date),executionIndex=matchedIndex>=0?matchedIndex:Math.max(0,(window.centralRecords||[]).length-1);
+    localStorage.setItem(CONFIG.storageKeys.strategyExecution,JSON.stringify({lastSellExecution:{executionIndex,executionDate:date,signalA:Number(plan.input.todayArk),mode:plan.decision.strategy.mode}}));
+  }
+  return snap;
 }
 function renderMarketRegime(plan){return `<div class="rebalance-mini"><strong>市場狀態</strong><span>台股 ${safe(plan.markets.tw.label)} · 賣出因子 ×${plan.markets.tw.factor.toFixed(2)}</span><span>美股 ${safe(plan.markets.us.label)} · 賣出因子 ×${plan.markets.us.factor.toFixed(2)}</span><small>台股由台灣指數 / RSI / 融資判斷；CNN 不直接控制純台股。</small></div>`;}
 function renderSellPlan(plan){

@@ -505,40 +505,52 @@ function evaluatePremiumCounterfactual() {
 }
 
 function calculateDecision(input) {
-  const gap = calculateGap(input.todayArk, input.actualAllocation);
-  const arkHistory = [...input.arkHistory.slice(-9), input.todayArk];
-  const trend = calculateArkTrend(arkHistory);
-  const regime = determineRegime({ ...input, gap, trend, arkHistory });
-  let action = "HOLD",
-    rate = 0,
-    target = input.actualAllocation,
-    label = "NO TRADE";
-  if (["ACCUMULATION", "DEFENSIVE_ACCUMULATION"].includes(regime)) {
-    action = "BUY";
-    const fill = window.BuyEngineV2.calculateBaseGapFillRate(gap),
-      trendFactor = window.BuyEngineV2.calculateArkTrendFactor(trend.delta1D),
-      marketFactor = window.BuyEngineV2.calculateMarketFactor(input);
-    rate = fill * trendFactor * marketFactor;
-    target = input.actualAllocation + gap * rate;
-    label =
-      regime === "DEFENSIVE_ACCUMULATION"
-        ? "DEFENSIVE ACCUMULATION"
-        : trend.delta1D < 0
-          ? "SLOW ACCUMULATION"
-          : "ACCUMULATE";
-  }
-  if (["DISTRIBUTION", "CONFIRMED_DISTRIBUTION", "RISK_OFF"].includes(regime)) {
-    action = "SELL";
-    const excessGap = Math.max(0, input.actualAllocation - input.todayArk);
-    rate = calculateSellFillRate(
-      regime,
-      excessGap,
-      calculateMarketModifier(input, "SELL"),
-    );
-    target = input.actualAllocation - excessGap * rate;
-    label = regime.replaceAll("_", " ");
-  }
-  if (regime === "WATCH") label = "PAUSE · WATCH";
+  const gap = calculateGap(input.todayArk, input.actualAllocation),
+    arkHistory = [...input.arkHistory.slice(-9), input.todayArk],
+    trend = calculateArkTrend(arkHistory),
+    history = input.strategyHistory?.length
+      ? input.strategyHistory
+      : arkHistory.map((arkAllocation, index) => ({
+          arkAllocation,
+          taiwanIndex:
+            index === arkHistory.length - 1 ? input.currentTaiwanIndex : null,
+        })),
+    savedExecution = (() => {
+      try {
+        return JSON.parse(
+          localStorage.getItem(CONFIG.storageKeys.strategyExecution) || "{}",
+        );
+      } catch {
+        return {};
+      }
+    })(),
+    strategyState =
+      input.strategyState !== undefined ? input.strategyState : savedExecution,
+    strategy = window.ARKStrategyEngine.evaluateStrategy(
+      {
+        A: input.todayArk,
+        W: input.actualAllocation,
+        CNN: input.cnn,
+        M: input.margin,
+        history,
+        currentIndex: history.length - 1,
+      },
+      strategyState,
+    ),
+    action = strategy.action,
+    target = strategy.targetAllocation,
+    rate = Math.abs(gap) > 0 ? strategy.adjustmentPoints / Math.abs(gap) : 0,
+    regime =
+      strategy.mode === window.ARKStrategyEngine.MODES.EXTREME_BUY
+        ? "DEFENSIVE_ACCUMULATION"
+        : strategy.mode === window.ARKStrategyEngine.MODES.GENERAL_BUY
+          ? "ACCUMULATION"
+          : strategy.mode === window.ARKStrategyEngine.MODES.ACCELERATED_SELL
+            ? "RISK_OFF"
+            : strategy.mode === window.ARKStrategyEngine.MODES.GENERAL_SELL
+              ? "DISTRIBUTION"
+              : "HOLD",
+    label = strategy.mode.replaceAll("_", " ");
   return {
     gap,
     trend,
@@ -550,6 +562,8 @@ function calculateDecision(input) {
     urgency: calculateUrgencyScore(gap, trend, regime, action),
     arkHistory,
     suggestedCapital: input.arkSuggestedCapital,
+    strategy,
+    adjustmentPoints: strategy.adjustmentPoints,
   };
 }
 
@@ -2063,8 +2077,12 @@ function getInput() {
     ],
     previousRegime: (loadHistory().at(-1) || {}).regime,
   };
+  input.strategyHistory = recordsWithCurrentMarket(
+    window.centralRecords || [],
+    input,
+  );
   const prediction = predictMarketPosition(
-    recordsWithCurrentMarket(window.centralRecords || [], input),
+    input.strategyHistory,
     input,
   );
   input.marketPosition = prediction.value;
@@ -2606,9 +2624,11 @@ function decisionReasons(input, d) {
     r.push(
       `當下加權指數 ${input.currentTaiwanIndex.toLocaleString("zh-TW", { maximumFractionDigits: 2 })} 點，市場位置判定為「${input.marketPrediction?.label || "區間震盪"}」，已納入今日布局／調節速度。`,
     );
+  if (d.strategy?.reasons?.length)
+    r.push(`共用策略判定：${d.strategy.reasons.join("；")}。`);
   if (extremeMode)
     r.push(
-      `今日進入極端機會模式（${Number(plan.extremeScore || 0).toFixed(2)}／9 分），5 倍只代表單檔位階上限；總投入另受每日缺口保護。本日${plan.tripleExtremeSignal ? "同時符合 CNN≤25、方舟水位≥80% 與融資維持率≤166%，上限放寬為" : "未同時符合三重極端訊號，上限為"}剩餘缺口的 ${(Number(plan.dailyGapFillCapRate || 0.25) * 100).toFixed(0)}%。依實際建議金額回算，約填補 ${actualGapFillPercent.toFixed(2)} 個百分點、占剩餘缺口 ${gapFillShare.toFixed(0)}%，隔日再依最新缺口遞減計算。`,
+      `今日採極端補倉：A≥80%，且 CNN≤25 或融資維持率≤166%。以方舟水位為目標，補入缺口的 75%，單日上限 3 個百分點；5 倍只代表單檔位階上限。本日依實際下單金額回算約填補 ${actualGapFillPercent.toFixed(2)} 個百分點。`,
     );
   else if (water.zone === "HIGH" && water.direction === "RISING")
     r.push(
@@ -2623,20 +2643,11 @@ function decisionReasons(input, d) {
   if (d.regime === "WATCH" && d.gap > CONFIG.buyWatchMaxGap)
     r.push("目前觸發快速下降、連續深度回撤或市場極端過熱等明確停買條件。");
   if (d.action === "SELL") {
-    const excess = Math.abs(d.gap),
-      reduction = input.actualAllocation - d.target;
+    const reduction = input.actualAllocation - d.target;
     r.push(
-      `本次只處理超額部位的 ${(d.rate * 100).toFixed(0)}%，預計降低 ${reduction.toFixed(2)}%。`,
+      `${d.strategy?.mode === window.ARKStrategyEngine.MODES.ACCELERATED_SELL ? "加速" : "一般"}調節預計降低 ${reduction.toFixed(2)} 個百分點；成交後依該模式開始冷卻。`,
     );
-    if (excess <= 2)
-      r.push("超額幅度只有 1–2%，已限制賣出速度與急迫度，避免過度調節。");
   }
-  if (d.action === "BUY" && d.gap > CONFIG.defensiveAccumulationGap)
-    r.push(
-      `缺口較大時採平滑加速建倉，不再因跨過 20% 門檻突然降速；最終倍率再依未來上漲／下跌機率與 ARK 趨勢微調。`,
-    );
-  else if (d.action === "BUY" && d.trend.delta1D < 0)
-    r.push("ARK 走弱時保留買進方向，但降低建倉速度。");
   return r;
 }
 function buildAllocationSummary(d, input, market = {}) {
@@ -2679,7 +2690,7 @@ function buildAllocationSummary(d, input, market = {}) {
     else if (fallingConfirmed)
       actionText = `ARK 趨勢仍弱，本次以 ${multiplier.toFixed(2)} 倍減速布局`;
     else actionText = `本次依 ${multiplier.toFixed(2)} 倍位階股數分批布局`;
-    return `目前持倉 ${actual.toFixed(2)}% 低於 ARK ${target.toFixed(2)}%，缺口 ${gap.toFixed(2)}%，屬於${size}。${trendContext} ${marketContext} 結論：${actionText}，一般非槓桿 ETF 最高 4 倍、槓桿 ETF 最高 3 倍；今日依缺口與未來漲跌機率，預計填補約 ${(d._v2Plan?.dailyGapFillPercent || 0).toFixed(2)}% 配置缺口。只有極端機會模式才開放非槓桿 ETF 5 倍，不建議一次追滿。`;
+    return `目前持倉 ${actual.toFixed(2)}% 低於 ARK ${target.toFixed(2)}%，缺口 ${gap.toFixed(2)}%，屬於${size}。${trendContext} ${marketContext} 結論：${actionText}；共用策略預計調高 ${(d.adjustmentPoints || 0).toFixed(2)} 個百分點，總預算再分配至各檔 ETF 位階與折溢價倍率。`;
   }
   const size =
     absoluteGap > 5 ? "明顯超配" : absoluteGap > 2 ? "中度超配" : "輕微超配";
@@ -2694,7 +2705,7 @@ function buildAllocationSummary(d, input, market = {}) {
     actionText =
       input.arkSuggestedCapital < 0
         ? `可調節降低風險；ARK 降風險趨勢已確認，可處理超額部位金額 NT$ ${Math.round(input.arkSuggestedCapital).toLocaleString("zh-TW")}，可至調節計算機中檢視股票配置`
-        : `可調節降低風險；ARK 降風險趨勢已確認，可處理超額部位的 ${(d.rate * 100).toFixed(0)}%，預計把配置由 ${actual.toFixed(2)}% 降至 ${d.target.toFixed(2)}%；若要顯示調節金額，請在建議佈局／調節金額輸入負數`;
+        : `可調節降低風險；共用策略建議降低 ${(d.adjustmentPoints || 0).toFixed(2)} 個百分點，預計把配置由 ${actual.toFixed(2)}% 降至 ${d.target.toFixed(2)}%；可至調節計算機分配賣出標的`;
   else
     actionText =
       "目前只有超額事實、尚缺持續下降確認，先觀察；不因大盤單獨創高立即賣出";
@@ -2802,15 +2813,18 @@ function calculateBacktestMetrics(values, dailyReturns, allocations, turnover) {
 function buildStrategyBacktest(records) {
   const rows = records
     .filter(
-      (row) =>
-        row.date &&
-        Number(row.taiwanIndex) > 0 &&
-        Number.isFinite(Number(row.arkAllocation)),
+      (row) => row.date && Number(row.taiwanIndex) > 0,
     )
     .map((row) => ({
       ...row,
       taiwanIndex: Number(row.taiwanIndex),
-      arkAllocation: Number(row.arkAllocation),
+      arkAllocation:
+        row.arkAllocation !== "" &&
+        row.arkAllocation !== null &&
+        row.arkAllocation !== undefined &&
+        Number.isFinite(Number(row.arkAllocation))
+          ? Number(row.arkAllocation)
+          : null,
     }))
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
   if (rows.length < 2) return { rows, strategies: [] };
@@ -2818,14 +2832,10 @@ function buildStrategyBacktest(records) {
       {
         key: "current",
         name: "目前規則",
-        initial: rows[0].arkAllocation,
-      },
-      {
-        key: "ark",
-        name: "ARK直接配置",
-        initial: rows[0].arkAllocation,
+        initial: 80,
       },
       { key: "fixed", name: "固定70%", initial: 70 },
+      { key: "fixed80", name: "固定80%", initial: 80 },
     ],
     states = Object.fromEntries(
       definitions.map((definition) => [
@@ -2838,13 +2848,32 @@ function buildStrategyBacktest(records) {
           allocations: [clamp(definition.initial, 0, 100)],
           dailyReturns: [],
           turnover: 0,
-          previousRegime: "HOLD",
+          actions: [],
+          pendingSignal: null,
+          strategyState: {},
         },
       ]),
     ),
     dates = [rows[0].date];
+  const current = states.current,
+    firstHistory = rows.slice(0, 1);
+  if (rows[0].arkAllocation !== null)
+    current.pendingSignal = {
+      ...window.ARKStrategyEngine.evaluateStrategy({
+        A: rows[0].arkAllocation,
+        W: current.allocation,
+        CNN: rows[0].cnn,
+        M: rows[0].marginMaintenance,
+        history: firstHistory,
+        currentIndex: 0,
+      }),
+      signalA: rows[0].arkAllocation,
+      signalIndex: 0,
+      signalDate: rows[0].date,
+    };
   for (let i = 1; i < rows.length; i++) {
-    const marketReturn = rows[i].taiwanIndex / rows[i - 1].taiwanIndex - 1;
+    const marketReturn = rows[i].taiwanIndex / rows[i - 1].taiwanIndex - 1,
+      row = rows[i];
     dates.push(rows[i].date);
     for (const state of Object.values(states)) {
       const portfolioReturn = marketReturn * (state.allocation / 100);
@@ -2852,41 +2881,57 @@ function buildStrategyBacktest(records) {
       state.values.push(state.value);
       state.dailyReturns.push(portfolioReturn);
     }
-    const current = states.current,
-      row = rows[i],
-      history = rows
-        .slice(Math.max(0, i - 10), i)
-        .map((item) => item.arkAllocation),
-      marketPrediction = predictMarketPosition(rows.slice(0, i + 1), {
-        todayArk: row.arkAllocation,
-        cnn: Number(row.cnn) || 50,
-        rsi: Number(row.rsi) || 50,
-      }),
-      input = {
-        todayArk: row.arkAllocation,
-        actualAllocation: current.allocation,
-        arkHistory: history,
-        cnn: Number(row.cnn) || 50,
-        rsi: Number(row.rsi) || 50,
-        margin: Number(row.marginMaintenance) || 0,
-        marketPosition: marketPrediction.value,
-        currentTaiwanIndex: row.taiwanIndex,
-        previousRegime: current.previousRegime,
-      },
-      decision = applyArkWaterLevelDecisionPolicy(
-        input,
-        calculateDecision(input),
+    const driftedAllocation = window.ARKStrategyEngine.allocationAfterMarketMove(
+        current.allocation,
+        marketReturn,
       ),
-      nextCurrent =
-        decision.action === "HOLD"
-          ? current.allocation
-          : clamp(decision.target, 0, 100);
-    current.turnover += Math.abs(nextCurrent - current.allocation);
-    current.allocation = nextCurrent;
-    current.previousRegime = decision.regime;
-    states.ark.turnover += Math.abs(row.arkAllocation - states.ark.allocation);
-    states.ark.allocation = clamp(row.arkAllocation, 0, 100);
+      execution = window.ARKStrategyEngine.executePendingSignal(
+        current.pendingSignal,
+        driftedAllocation,
+        Math.max(0, 100 - driftedAllocation),
+      );
+    current.allocation = execution.allocation;
+    if (execution.executed) {
+      current.turnover += Math.abs(execution.delta);
+      current.actions.push({
+        index: i,
+        date: row.date,
+        delta: execution.delta,
+        mode: current.pendingSignal.mode,
+        signalDate: current.pendingSignal.signalDate,
+        signalA: current.pendingSignal.signalA,
+      });
+      if (execution.delta < 0)
+        current.strategyState.lastSellExecution = {
+          executionIndex: i,
+          executionDate: row.date,
+          signalA: current.pendingSignal.signalA,
+          mode: current.pendingSignal.mode,
+        };
+    }
+    current.pendingSignal = null;
+    if (row.arkAllocation !== null) {
+      const signal = window.ARKStrategyEngine.evaluateStrategy(
+        {
+          A: row.arkAllocation,
+          W: current.allocation,
+          CNN: row.cnn,
+          M: row.marginMaintenance,
+          history: rows.slice(0, i + 1),
+          currentIndex: i,
+        },
+        current.strategyState,
+      );
+      if (signal.action !== "HOLD" && signal.adjustmentPoints > 0)
+        current.pendingSignal = {
+          ...signal,
+          signalA: row.arkAllocation,
+          signalIndex: i,
+          signalDate: row.date,
+        };
+    }
     states.fixed.allocation = 70;
+    states.fixed80.allocation = 80;
     for (const state of Object.values(states))
       state.allocations.push(state.allocation);
   }
@@ -2902,6 +2947,8 @@ function buildStrategyBacktest(records) {
         state.allocations,
         state.turnover,
       ),
+      actions: state.actions,
+      endingAllocation: state.allocation,
     };
   });
   return { rows, dates, strategies };
@@ -3152,7 +3199,9 @@ function renderSensitivityValidation(records) {
 }
 function renderStrategyValidation() {
   const year = CONFIG.arkWaterLevels.year,
-    records = getAnnualArkRecords(window.centralRecords || [], year),
+    records = (window.centralRecords || []).filter(
+      (row) => String(row.date).startsWith(`${year}-`) && Number(row.taiwanIndex) > 0,
+    ),
     result = buildStrategyBacktest(records);
   if (!result.strategies.length) {
     $("backtestCount").textContent = "資料不足";
@@ -3175,18 +3224,18 @@ function renderStrategyValidation() {
   const current = result.strategies.find(
       (strategy) => strategy.key === "current",
     ),
-    ark = result.strategies.find((strategy) => strategy.key === "ark"),
+    fixed80 = result.strategies.find((strategy) => strategy.key === "fixed80"),
     returnDifference =
-      current.metrics.cumulativeReturn - ark.metrics.cumulativeReturn,
-    drawdownDifference = current.metrics.maxDrawdown - ark.metrics.maxDrawdown;
+      current.metrics.cumulativeReturn - fixed80.metrics.cumulativeReturn,
+    drawdownDifference = current.metrics.maxDrawdown - fixed80.metrics.maxDrawdown;
   $("backtestConclusion").textContent =
     returnDifference >= 0 && drawdownDifference >= 0
-      ? `目前樣本下，現行規則相較 ARK 直接配置多 ${returnDifference.toFixed(2)}% 報酬，最大回撤改善 ${drawdownDifference.toFixed(2)}%；報酬與風險同時改善，但仍需更多跨行情資料驗證。`
+      ? `目前樣本下，現行規則相較固定 80% 多 ${returnDifference.toFixed(2)}% 報酬，最大回撤改善 ${drawdownDifference.toFixed(2)}%；報酬與風險同時改善，但仍需更多跨行情資料驗證。`
       : returnDifference < 0 && drawdownDifference >= 0
-        ? `目前樣本下，現行規則少 ${Math.abs(returnDifference).toFixed(2)}% 報酬，換得最大回撤改善 ${drawdownDifference.toFixed(2)}%；這是降低風險所付出的機會成本。`
+        ? `目前樣本下，現行規則比固定 80% 少 ${Math.abs(returnDifference).toFixed(2)}% 報酬，換得最大回撤改善 ${drawdownDifference.toFixed(2)}%。`
         : returnDifference >= 0
-          ? `目前樣本下，現行規則多 ${returnDifference.toFixed(2)}% 報酬，但最大回撤惡化 ${Math.abs(drawdownDifference).toFixed(2)}%；較高報酬來自承擔更多風險。`
-          : `目前樣本下，現行規則比 ARK 直接配置少 ${Math.abs(returnDifference).toFixed(2)}% 報酬，最大回撤也惡化 ${Math.abs(drawdownDifference).toFixed(2)}%；暫時不能視為已驗證優於直接配置，應保留參數調整空間。`;
+          ? `目前樣本下，現行規則比固定 80% 多 ${returnDifference.toFixed(2)}% 報酬，但最大回撤惡化 ${Math.abs(drawdownDifference).toFixed(2)}%。`
+          : `目前樣本下，現行規則比固定 80% 少 ${Math.abs(returnDifference).toFixed(2)}% 報酬，最大回撤也惡化 ${Math.abs(drawdownDifference).toFixed(2)}%。`;
   const allValues = result.strategies.flatMap((strategy) => strategy.values),
     min = Math.min(...allValues),
     max = Math.max(...allValues),
@@ -3204,7 +3253,7 @@ function renderStrategyValidation() {
       ((max - value) / Math.max(0.0001, max - min)) * (height - top - bottom),
     gridValues = [max, (max + min) / 2, min];
   $("backtestChart").innerHTML =
-    `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="三種配置策略淨值曲線">${gridValues.map((value) => `<line class="grid" x1="${left}" x2="${width - right}" y1="${y(value)}" y2="${y(value)}"/><text x="2" y="${y(value) + 3}">${value.toFixed(1)}</text>`).join("")}${result.strategies.map((strategy) => `<polyline class="line ${strategy.key}" points="${strategy.values.map((value, index) => `${x(index)},${y(value)}`).join(" ")}"/>`).join("")}<text x="${left}" y="${height - 5}">${result.dates[0].slice(5).replace("-", "/")}</text><text x="${width - right}" y="${height - 5}" text-anchor="end">${result.dates.at(-1).slice(5).replace("-", "/")}</text></svg>`;
+    `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="動態策略與固定配置淨值曲線">${gridValues.map((value) => `<line class="grid" x1="${left}" x2="${width - right}" y1="${y(value)}" y2="${y(value)}"/><text x="2" y="${y(value) + 3}">${value.toFixed(1)}</text>`).join("")}${result.strategies.map((strategy) => `<polyline class="line ${strategy.key}" points="${strategy.values.map((value, index) => `${x(index)},${y(value)}`).join(" ")}"/>`).join("")}<text x="${left}" y="${height - 5}">${result.dates[0].slice(5).replace("-", "/")}</text><text x="${width - right}" y="${height - 5}" text-anchor="end">${result.dates.at(-1).slice(5).replace("-", "/")}</text></svg>`;
   $("backtestTable").innerHTML =
     `<div class="backtest-row header"><span>策略</span><span>累積報酬</span><span>最大回撤</span><span>年化波動</span><span>累計換手</span><span>平均持股</span></div>${result.strategies.map((strategy) => `<div class="backtest-row"><strong>${strategy.name}</strong><span>${signed(strategy.metrics.cumulativeReturn)}</span><span>${signed(strategy.metrics.maxDrawdown)}</span><span>${strategy.metrics.annualVolatility.toFixed(2)}%</span><span>${strategy.metrics.turnover.toFixed(1)}%點</span><span>${strategy.metrics.averageAllocation.toFixed(1)}%</span></div>`).join("")}`;
 }
@@ -3596,26 +3645,32 @@ function buildBuyV2Plan(input, d) {
     { ...input, similarTrendAnalysis },
     d,
   ),
-    tripleExtremeSignal =
-      String($("cnn")?.value ?? "").trim() !== "" &&
-      Number(input.cnn) >= 0 &&
-      Number(input.cnn) <= 25 &&
-      Number(input.todayArk) >= 80 &&
-      Number(input.margin) > 0 &&
-      Number(input.margin) <= 166,
+    strategyMode = d.strategy?.mode,
+    isExtremeBuy =
+      strategyMode === window.ARKStrategyEngine.MODES.EXTREME_BUY,
+    isBuy = d.action === "BUY" && Number(d.adjustmentPoints || 0) > 0,
+    allocationGap = Math.max(
+      0,
+      Number(input.todayArk || 0) - Number(input.actualAllocation || 0),
+    ),
     dailyGapFillCapRate =
-      adjusted.buyMode === "EXTREME_DEPLOYMENT"
-        ? tripleExtremeSignal
-          ? 0.3
-          : 0.25
-        : Math.min(Number(adjusted.dailyGapFillRate || 0.2), 0.25),
+      allocationGap > 0 ? Number(d.adjustmentPoints || 0) / allocationGap : 0,
     executionCapAmount = Math.max(
       0,
-      Number(input.arkSuggestedCapital || 0) * dailyGapFillCapRate,
+      isBuy ? Number(input.arkSuggestedCapital || 0) * dailyGapFillCapRate : 0,
     ),
+    strategyPlan = {
+      ...adjusted,
+      buyMode: isExtremeBuy ? "EXTREME_DEPLOYMENT" : "NORMAL",
+      targetGapFillPercent: Number(d.adjustmentPoints || 0),
+      dailyGapFillPercent: Number(d.adjustmentPoints || 0),
+      dailyGapFillRate: dailyGapFillCapRate,
+      theoreticalExecution: executionCapAmount,
+      newGapFill: executionCapAmount,
+    },
     executionAtScale = (scale) => {
-      const scaledPlan = { ...adjusted, dynamicScale: scale };
-      return adjusted.orders.reduce((sum, item) => {
+      const scaledPlan = { ...strategyPlan, dynamicScale: scale };
+      return strategyPlan.orders.reduce((sum, item) => {
         const recommendation = calculateEtfRecommendedMultiplier(
           item,
           scaledPlan,
@@ -3627,11 +3682,11 @@ function buildBuyV2Plan(input, d) {
         );
       }, 0);
     };
-  let cappedScale = Number(adjusted.dynamicScale || 0),
-    uncappedExecution = executionAtScale(cappedScale);
-  if (executionCapAmount > 0 && uncappedExecution > executionCapAmount) {
+  const scaleCap = isExtremeBuy ? 5 : 4;
+  let cappedScale = 0;
+  if (executionCapAmount > 0) {
     let low = 0,
-      high = cappedScale;
+      high = scaleCap;
     for (let iteration = 0; iteration < 24; iteration += 1) {
       const middle = (low + high) / 2;
       if (executionAtScale(middle) <= executionCapAmount) low = middle;
@@ -3640,13 +3695,14 @@ function buildBuyV2Plan(input, d) {
     cappedScale = Math.floor(low * 100) / 100;
   }
   const cappedPlan = {
-      ...adjusted,
+      ...strategyPlan,
       dynamicScale: cappedScale,
       uncappedDynamicScale: Number(adjusted.dynamicScale || 0),
       dailyGapFillCapRate,
       executionCapAmount: round(executionCapAmount, 2),
-      tripleExtremeSignal,
-      executionWasCapped: cappedScale < Number(adjusted.dynamicScale || 0),
+      tripleExtremeSignal: isExtremeBuy,
+      executionWasCapped: executionAtScale(scaleCap) > executionCapAmount,
+      strategyMode,
     },
     effectiveExecution = cappedPlan.orders.reduce((sum, item) => {
       const recommendation = calculateEtfRecommendedMultiplier(item, cappedPlan);
@@ -3683,7 +3739,9 @@ function renderDecisionExplanation(plan, input, d) {
   }[plan.buyMode];
   if (plan.gap <= CONFIG.buyEngineV2.deadband)
     return "配置缺口位於 ±1% 無動作區間，不追求精確歸零。";
-  return `${modeZh}：每日填補剩餘缺口的 ${(plan.baseGapFillRate * 100).toFixed(0)}%，ARK 趨勢 ${d.trend.delta1D >= 0 ? "上升" : "下降"} ${Math.abs(d.trend.delta1D).toFixed(2)}%，再由市場因子調整。${renderExecutionBuffer(plan)} ${renderExtremeMode(plan)}`;
+  if (d.action !== "BUY")
+    return `共用策略目前判定為${d.action === "SELL" ? "調節" : "維持"}，不產生買進預算。`;
+  return `${modeZh}：共用策略建議增加 ${Number(d.adjustmentPoints || 0).toFixed(2)} 個百分點，換算為本日總預算後，再依各檔 ETF 位階、槓桿上限與折溢價分配。${renderExecutionBuffer(plan)}`;
 }
 function renderBuyEngine(plan, input, d) {
   const modeZh = {
@@ -3815,12 +3873,6 @@ function renderDashboard() {
   plan.actualGapFillPercent = actualGapFill.points;
   plan.actualGapFillShare = actualGapFill.share;
   d._v2Plan = plan;
-  if (
-    d.gap > CONFIG.deadBand &&
-    plan.baseGapFillRate > 0 &&
-    d.regime !== "WATCH"
-  )
-    d.action = "BUY";
   window.currentDecision = d;
   $("arkTarget").textContent = pct(input.todayArk);
   $("actualValue").textContent = pct(input.actualAllocation, 2);
@@ -3844,7 +3896,7 @@ function renderDashboard() {
         ? `極端 ×${Math.min(positionExecution.multiplier, 5).toFixed(2)} · 槓桿最高 ×3`
         : `一般 ×${Math.min(positionExecution.multiplier, 4).toFixed(2)} · 槓桿最高 ×3`
       : d.action === "SELL"
-        ? `賣出超額部位的 ${(d.rate * 100).toFixed(0)}%`
+        ? `${d.strategy?.mode === window.ARKStrategyEngine.MODES.ACCELERATED_SELL ? "加速" : "一般"}調節 ${d.adjustmentPoints.toFixed(2)}%`
         : "0";
   $("targetExecution").textContent =
     d.action === "SELL"
@@ -3865,10 +3917,10 @@ function renderDashboard() {
   $("executionSpeed").textContent =
     d.action === "BUY"
       ? plan.buyMode === "EXTREME_DEPLOYMENT"
-        ? `極端機會 ${Number(plan.extremeScore || 0).toFixed(2)}／9 分：倍率上限 ×5；今日實際倍率 ×${positionExecution.multiplier.toFixed(2)}，總投入上限為剩餘缺口的 ${(Number(plan.dailyGapFillCapRate || 0.25) * 100).toFixed(0)}%`
-        : `依缺口＋相似趨勢：一般最高 ${Math.min(positionExecution.multiplier, 4).toFixed(2)} 倍，槓桿最高 3 倍`
+        ? `極端補倉：缺口 75%、單日最高 3 個百分點；今日單檔倍率 ×${positionExecution.multiplier.toFixed(2)}`
+        : `一般補倉：距 80% 缺口的 10%、單日最高 3 個百分點；今日單檔倍率 ×${positionExecution.multiplier.toFixed(2)}`
       : d.action === "SELL"
-        ? `賣出超額部位的 ${(d.rate * 100).toFixed(0)}%`
+        ? `${d.strategy?.mode === window.ARKStrategyEngine.MODES.ACCELERATED_SELL ? "35% 計算、單日最高 4%" : "50% 計算、單日最高 2%"}`
         : "不交易";
   $("urgencyScore").textContent = `${d.urgency} / 100`;
   $("actionBadge").textContent = actionZh(d.action);
@@ -4139,6 +4191,7 @@ function runSelfTests() {
     rsi: 50,
     marketPosition: "MID",
     previousRegime: "HOLD",
+    strategyState: {},
   };
   test("無動作區間會回傳觀望不動", () =>
     calculateDecision({
@@ -4156,20 +4209,20 @@ function runSelfTests() {
     }).action === "BUY");
   test("大缺口每日填補率為10%", () =>
     window.BuyEngineV2.calculateBaseGapFillRate(22.15) === 0.1);
-  test("87→84→81 會進入分批調節", () =>
+  test("A 高於 70 時不因高水位回落直接調節", () =>
     calculateDecision({
       ...base,
       todayArk: 81,
       actualAllocation: 84,
       arkHistory: [87, 87, 87, 87, 87, 84],
-    }).regime === "DISTRIBUTION");
-  test("回撤 8% 會進入風險降低", () =>
+    }).regime === "HOLD");
+  test("A 高於 70 時即使回撤 8% 仍維持", () =>
     calculateDecision({
       ...base,
       todayArk: 79,
       actualAllocation: 84,
       arkHistory: [87, 87, 87, 87, 87, 83],
-    }).regime === "RISK_OFF");
+    }).regime === "HOLD");
   test("溢價高於 0.5% 不會一律等待", () =>
     calculatePremiumDecision({ premium: 0.8 }, 90, 1).status !==
     "WAIT FOR NAV");
@@ -4205,75 +4258,72 @@ function runSelfTests() {
     a[i] = { date: "2026-01-01", updated: true };
     return a.length === 1 && a[0].updated;
   });
-  test("小幅超額時只處理 20–25%", () => {
+  test("小幅超額未達必要門檻時不調節", () => {
     const d = calculateDecision({
       ...base,
       todayArk: 70.4,
       actualAllocation: 72,
       arkHistory: [79, 78, 77, 76, 74, 73.6],
     });
-    return d.action === "SELL" && d.rate >= 0.2 && d.rate <= 0.25;
+    return d.action === "HOLD";
   });
-  test("小幅超額急迫度限於 50–65", () => {
+  test("小幅超額維持原持股", () => {
     const d = calculateDecision({
       ...base,
       todayArk: 70.4,
       actualAllocation: 72,
       arkHistory: [79, 78, 77, 76, 74, 73.6],
     });
-    return d.urgency >= 50 && d.urgency <= 65;
+    return d.target === 72;
   });
   test("今日執行金額等於位階布局金額乘倍率", () =>
     summarizePositionExecution({
       dynamicScale: 5,
+      buyMode: "EXTREME_DEPLOYMENT",
+      extremeScore: 9,
       orders: [{ positionAmount: 57 }, { positionAmount: 80 }],
     }).totalAmount === 685);
-  test("超額超過 5% 風險降低可處理 50%", () => {
+  test("A 等於 70 不啟動調節", () => {
     const d = calculateDecision({
       ...base,
       todayArk: 70,
       actualAllocation: 76,
       arkHistory: [79, 79, 79, 78, 74, 72],
     });
-    return d.regime === "RISK_OFF" && d.rate === 0.5;
+    return d.action === "HOLD";
   });
-  test("1–5% 缺口且 ARK 下跌可暫停觀察", () =>
+  test("A 低於 80 時不啟動一般補倉", () =>
     calculateDecision({
       ...base,
       todayArk: 70,
       actualAllocation: 67,
       arkHistory: [75, 74, 73, 72, 71, 72],
-    }).regime === "WATCH");
-  test("5–20% 缺口且 ARK 下跌仍會減速建倉", () => {
+    }).regime === "HOLD");
+  test("A 低於 80 時即使缺口 10% 仍維持", () => {
     const d = calculateDecision({
       ...base,
       todayArk: 70,
       actualAllocation: 60,
       arkHistory: [76, 75, 74, 73, 72, 73.2],
     });
-    return d.regime === "ACCUMULATION" && d.action === "BUY";
+    return d.regime === "HOLD" && d.action === "HOLD";
   });
-  test("超過 20% 缺口會防守型分批建倉", () => {
+  test("A 低於 80 時不因超大缺口買進", () => {
     const d = calculateDecision({
       ...base,
       todayArk: 70.4,
       actualAllocation: 20,
       arkHistory: [79, 78, 77, 76, 74, 73.6],
     });
-    return (
-      d.regime === "DEFENSIVE_ACCUMULATION" &&
-      d.action === "BUY" &&
-      d.target > 20 &&
-      d.target < 25.04
-    );
+    return d.regime === "HOLD" && d.target === 20;
   });
-  test("單日快速下降仍可觸發明確停買", () =>
+  test("A 低於 80 時單日快速下降仍不建立買單", () =>
     calculateDecision({
       ...base,
       todayArk: 70,
       actualAllocation: 20,
       arkHistory: [81, 80, 79, 78, 77, 77],
-    }).regime === "WATCH");
+    }).regime === "HOLD");
   test("年度方舟水位只保留高於 80% 與 70% 以下", () => {
     const rows = getAnnualArkLevelRecords(
       [
@@ -4781,10 +4831,11 @@ function runSelfTests() {
       });
     return d.action === "HOLD" && d.rate === 0 && d.target === 90;
   });
-  test("超大低配總結會明確顯示1倍布局", () => {
+  test("低配總結會顯示共用策略調整點數", () => {
     const input = { todayArk: 66.8, actualAllocation: 20 },
       d = {
         action: "BUY",
+        adjustmentPoints: 3,
         gap: 46.8,
         rate: 0.1,
         target: 24.68,
@@ -4797,7 +4848,7 @@ function runSelfTests() {
         },
         _v2Plan: { dynamicScale: 1 },
       };
-    return buildAllocationSummary(d, input).includes("固定使用 1 倍");
+    return buildAllocationSummary(d, input).includes("共用策略預計調高 3.00 個百分點");
   });
   test("小幅超配總結會等待ARK趨勢確認", () => {
     const input = { todayArk: 66.8, actualAllocation: 68 },
@@ -4821,8 +4872,9 @@ function runSelfTests() {
       d = {
         action: "SELL",
         gap: -13.2,
-        rate: 0.5,
-        target: 73.4,
+        rate: 0.15,
+        target: 78,
+        adjustmentPoints: 2,
         trend: { delta1D: -1, delta3D: -3, delta5D: -5 },
         waterLevelState: {
           zone: "NORMAL",
@@ -4831,7 +4883,7 @@ function runSelfTests() {
           levels: CONFIG.arkWaterLevels,
         },
       };
-    return buildAllocationSummary(d, input).includes("超額部位的 50%");
+    return buildAllocationSummary(d, input).includes("降低 2.00 個百分點");
   });
   test("負數調節金額會直接顯示於超配總結", () => {
     const input = {
@@ -4866,10 +4918,10 @@ function runSelfTests() {
         { date: "2026-01-02", taiwanIndex: 110, arkAllocation: 100 },
         { date: "2026-01-03", taiwanIndex: 121, arkAllocation: 0 },
       ]),
-      ark = result.strategies.find((strategy) => strategy.key === "ark"),
+      current = result.strategies.find((strategy) => strategy.key === "current"),
       fixed = result.strategies.find((strategy) => strategy.key === "fixed");
     return (
-      Math.abs(ark.metrics.cumulativeReturn - 15.5) < 0.0001 &&
+      Math.abs(current.metrics.cumulativeReturn - 16.8) < 0.0001 &&
       Math.abs(fixed.metrics.cumulativeReturn - 14.49) < 0.0001
     );
   });

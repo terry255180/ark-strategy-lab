@@ -22,7 +22,7 @@
       href="icons/ark-strategy-icon.jpg?v=1"
     />
     <link rel="manifest" href="manifest.webmanifest?v=1" />
-    <link rel="stylesheet" href="styles.css?v=5.6" />
+    <link rel="stylesheet" href="styles.css?v=5.7" />
   </head>
   <body>
     <header class="topbar">
@@ -504,7 +504,7 @@
         <div class="section-head">
           <div>
             <h2>策略驗證儀表板</h2>
-            <p>比較目前規則、ARK 直接配置與固定 70% 配置的歷史結果</p>
+            <p>比較共用策略、固定 70% 與固定 80% 配置的歷史結果</p>
           </div>
           <span id="backtestCount" class="badge neutral">計算中</span>
         </div>
@@ -513,14 +513,14 @@
         <div class="backtest-chart-wrap">
           <div class="backtest-legend">
             <span><i class="current"></i>目前規則</span>
-            <span><i class="ark"></i>ARK直接配置</span>
             <span><i class="fixed"></i>固定70%</span>
+            <span><i class="fixed80"></i>固定80%</span>
           </div>
           <div id="backtestChart" class="backtest-chart"></div>
         </div>
         <div id="backtestTable" class="backtest-table"></div>
         <p class="research-warning">
-          採前一交易日收盤後配置承接下一交易日大盤報酬；目前規則與ARK直接配置均從首日ARK水位起跑。未計股息、稅費、滑價與ETF追蹤差異；目前規則為配置層模擬，不等同實際成交績效。
+          共用策略從 80% 持股起跑；訊號日收盤判定，下一筆有指數資料的日期收盤成交，成交前先計入持股漂移。未計股息、稅費、滑價與 ETF 追蹤差異；目前為配置層模擬，不等同實際成交績效。
         </p>
       </section>
 
@@ -552,10 +552,11 @@
       本系統僅供決策支援與歷史研究使用。策略參數為 V1 規則，不代表報酬預測。
     </footer>
     <script src="vendor/tesseract/tesseract.min.js"></script>
-    <script src="config.js?v=4.7"></script>
+    <script src="config.js?v=4.8"></script>
+    <script src="strategy-engine.js?v=1.0"></script>
     <script src="buy-engine-v2.js?v=3.0"></script>
-    <script src="app.js?v=7.8"></script>
-    <script src="rebalance.js?v=2.7"></script>
+    <script src="app.js?v=7.9"></script>
+    <script src="rebalance.js?v=2.8"></script>
     <script src="rebalance-ocr.js?v=1.9"></script>
   </body>
 </html>

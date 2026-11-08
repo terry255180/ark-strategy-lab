@@ -1,5 +1,5 @@
 window.CONFIG = Object.freeze({
-  strategyVersion: "V2.2",
+  strategyVersion: "V2.3",
   buyEngineV2: Object.freeze({
     status: "HEURISTIC · NOT BACKTEST OPTIMIZED",
     deadband: 1,
@@ -205,5 +205,6 @@ window.CONFIG = Object.freeze({
     etfs: "arkStrategyLab.etfs.v1",
     cache: "arkStrategyLab.centralCache.v2",
     visionToken: "arkStrategyLab.visionToken.v1",
+    strategyExecution: "arkStrategyLab.strategyExecution.v1",
   },
 });
