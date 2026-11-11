@@ -1908,9 +1908,11 @@ async function saveEtfListToGoogleSheet() {
 let strengthUniverse = [], strengthBenchmarkReturn = null;
 async function postGoogleSheetAction(action, extra = {}) {
   const endpoint = CONFIG.googleSheets?.webAppUrl,
-    token = $("visionAccessToken")?.value.trim();
+    token =
+      $("strengthAccessToken")?.value.trim() ||
+      $("visionAccessToken")?.value.trim();
   if (!endpoint) throw new Error("尚未設定 Google Sheet Apps Script 網址");
-  if (!token) throw new Error("請先在圖片辨識區輸入 AI 辨識密碼");
+  if (!token) throw new Error("請先輸入同步密碼");
   const response = await fetch(endpoint, {
     method: "POST",
     redirect: "follow",
@@ -5133,6 +5135,7 @@ function bind() {
   const visionTokenInputs = [
     $("visionAccessToken"),
     $("rebalanceVisionAccessToken"),
+    $("strengthAccessToken"),
   ].filter(Boolean);
   const savedVisionToken =
     localStorage.getItem(CONFIG.storageKeys.visionToken) || "";
