@@ -22,7 +22,7 @@
       href="icons/ark-strategy-icon.jpg?v=1"
     />
     <link rel="manifest" href="manifest.webmanifest?v=1" />
-    <link rel="stylesheet" href="styles.css?v=5.7" />
+    <link rel="stylesheet" href="styles.css?v=5.8" />
   </head>
   <body>
     <header class="topbar">
@@ -500,6 +500,34 @@
         </div>
       </details>
 
+      <details class="card strength-section collapsible-section" open>
+        <summary class="collapsible-section-head">
+          <span>
+            <strong>動態 ETF 清單－汰弱留強</strong>
+            <small>每日比較各檔 ETF 與 0050 最近 7 個交易日的相對強弱</small>
+          </span>
+          <span class="collapsible-section-meta">
+            <span id="strengthCount" class="badge neutral">尚未載入</span><i></i>
+          </span>
+        </summary>
+        <div class="collapsible-section-body">
+          <div class="strength-toolbar">
+            <div class="strength-add-form">
+              <label>ETF 代號<input id="strengthSymbol" inputmode="latin" maxlength="7" placeholder="例如 0050"></label>
+              <label>名稱（選填）<input id="strengthName" placeholder="ETF 中文名稱"></label>
+              <button id="strengthAddBtn" class="button secondary" type="button">新增</button>
+            </div>
+            <button id="strengthRefreshBtn" class="button primary" type="button">同步並計算</button>
+          </div>
+          <p id="strengthStatus" class="section-note" role="status">按「同步並計算」，從 Google Sheet 的 ETF 每日清單載入不重複標的。</p>
+          <div class="strength-summary" id="strengthSummary"></div>
+          <div class="strength-table-wrap">
+            <div id="strengthTable" class="strength-table"></div>
+          </div>
+          <p class="research-warning">7 日報酬使用最近 8 個有效交易日的調整後收盤價計算。RS Ratio＝(1＋ETF 7日報酬) ÷ (1＋0050 7日報酬) × 100；高於 100 表示同期跑贏 0050，低於 100 表示落後。這是相對強弱排序，不代表未來報酬保證。</p>
+        </div>
+      </details>
+
       <section class="card validation-card" hidden>
         <div class="section-head">
           <div>
@@ -555,7 +583,7 @@
     <script src="config.js?v=4.8"></script>
     <script src="strategy-engine.js?v=1.0"></script>
     <script src="buy-engine-v2.js?v=3.0"></script>
-    <script src="app.js?v=8.1"></script>
+    <script src="app.js?v=8.2"></script>
     <script src="rebalance.js?v=2.8"></script>
     <script src="rebalance-ocr.js?v=1.9"></script>
   </body>

@@ -164,12 +164,15 @@ function calculateReturnsFromYahoo_(symbol, body) {
   const threeYearBase = atOrBefore(threeYearStart);
   const dividendsAfter = base => base ? dividendEvents.filter(event => event.timestamp > base.timestamp && event.timestamp <= latest.timestamp).reduce((sum, event) => sum + event.amount / splitFactorAfter(event.timestamp), 0) : 0;
   const pct = base => base ? Math.round(((latest.value + (hasRelevantSplit ? dividendsAfter(base) : 0)) / base.value - 1) * 10000) / 100 : null;
+  const sevenTradingDayBase = points.length >= 8 ? points[points.length - 8] : null;
   const threeYear = pct(threeYearBase);
   const threeYearAnnualized = threeYear === null ? null : Math.round((Math.pow(1 + threeYear / 100, 1 / 3) - 1) * 10000) / 100;
   return {
     symbol,
     latestDate: Utilities.formatDate(latestDate, 'Asia/Taipei', 'yyyy-MM-dd'),
     latestPrice: Math.round((latest.rawClose > 0 ? latest.rawClose : latest.value) * 100) / 100,
+    return7D: pct(sevenTradingDayBase),
+    return7DStart: sevenTradingDayBase ? Utilities.formatDate(new Date(sevenTradingDayBase.timestamp * 1000), 'Asia/Taipei', 'yyyy-MM-dd') : null,
     ytd: pct(ytdBase),
     oneYear: pct(oneYearBase),
     threeYear,
@@ -185,12 +188,96 @@ function doPost(event) {
   try {
     const request = JSON.parse(event && event.postData && event.postData.contents || '{}');
     if (request.action === 'saveEtfList') return jsonOutput(saveEtfDailyList_(request));
+    if (request.action === 'getEtfUniverse') return jsonOutput(getEtfUniverse_(request));
+    if (request.action === 'updateEtfUniverse') return jsonOutput(updateEtfUniverse_(request));
     if (request.action === 'vision') return jsonOutput(analyzeArkImages_(request));
     if (request.action === 'rebalanceVision') return jsonOutput(analyzeHoldingImages_(request));
     return jsonOutput({ ok: false, error: '不支援的操作。' });
   } catch (error) {
     return jsonOutput({ ok: false, error: String(error && error.message || error) });
   }
+}
+
+function verifyVisionToken_(request) {
+  const accessToken = PropertiesService.getScriptProperties().getProperty('VISION_ACCESS_TOKEN');
+  if (!accessToken) throw new Error('Apps Script 尚未設定 VISION_ACCESS_TOKEN。');
+  if (!request.token || request.token !== accessToken) throw new Error('AI 辨識密碼不正確。');
+}
+
+function getEtfUniverse_(request) {
+  verifyVisionToken_(request);
+  const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const daily = spreadsheet.getSheetByName('ETF每日清單');
+  const state = ensureEtfUniverseSheet_(spreadsheet);
+  const saved = readEtfUniverseState_(state);
+  if (daily && daily.getLastRow() > 1) {
+    const values = daily.getDataRange().getDisplayValues();
+    const headers = values[0].map(value => String(value).trim());
+    const symbolIndex = headers.indexOf('股票代號'), nameIndex = headers.indexOf('股票名稱');
+    if (symbolIndex >= 0) values.slice(1).forEach(row => {
+      const symbol = cleanEtfSymbol_(row[symbolIndex]);
+      if (!symbol) return;
+      const name = String(row[nameIndex] || '').trim();
+      if (!saved[symbol]) saved[symbol] = { symbol, name, enabled: true, source: '每日清單' };
+      else if (!saved[symbol].name && name) saved[symbol].name = name;
+    });
+  }
+  writeEtfUniverseState_(state, saved);
+  return { ok: true, sheet: state.getName(), items: Object.keys(saved).sort().map(symbol => saved[symbol]).filter(item => item.enabled) };
+}
+
+function updateEtfUniverse_(request) {
+  verifyVisionToken_(request);
+  const symbol = cleanEtfSymbol_(request.symbol);
+  if (!symbol) throw new Error('ETF 代號格式錯誤。');
+  const operation = String(request.operation || 'add');
+  if (operation !== 'add' && operation !== 'remove') throw new Error('不支援的清單操作。');
+  const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ensureEtfUniverseSheet_(spreadsheet);
+  const saved = readEtfUniverseState_(sheet), old = saved[symbol] || {};
+  saved[symbol] = {
+    symbol,
+    name: String(request.name || old.name || '').replace(/[\r\n\t]/g, ' ').trim(),
+    enabled: operation === 'add',
+    source: operation === 'add' ? '手動新增' : (old.source || '每日清單')
+  };
+  writeEtfUniverseState_(sheet, saved);
+  return { ok: true, operation, item: saved[symbol] };
+}
+
+function ensureEtfUniverseSheet_(spreadsheet) {
+  let sheet = spreadsheet.getSheetByName('ETF動態清單');
+  if (!sheet) sheet = spreadsheet.insertSheet('ETF動態清單');
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, 6).setValues([['股票代號', '股票名稱', '啟用', '來源', '更新時間', '備註']]).setFontWeight('bold').setBackground('#123b44').setFontColor('#ffffff');
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function readEtfUniverseState_(sheet) {
+  const result = {};
+  if (sheet.getLastRow() < 2) return result;
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getDisplayValues().forEach(row => {
+    const symbol = cleanEtfSymbol_(row[0]);
+    if (!symbol) return;
+    result[symbol] = { symbol, name: String(row[1] || '').trim(), enabled: !/^(?:FALSE|否|0)$/i.test(String(row[2] || 'TRUE')), source: String(row[3] || '每日清單') };
+  });
+  return result;
+}
+
+function writeEtfUniverseState_(sheet, saved) {
+  const rows = Object.keys(saved).sort().map(symbol => {
+    const item = saved[symbol];
+    return [symbol, item.name || '', item.enabled !== false, item.source || '每日清單', Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss'), ''];
+  });
+  if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).clearContent();
+  if (rows.length) sheet.getRange(2, 1, rows.length, 6).setValues(rows);
+}
+
+function cleanEtfSymbol_(value) {
+  const symbol = String(value || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  return /^\d{4,6}[A-Z]?$/.test(symbol) ? symbol : '';
 }
 
 function saveEtfDailyList_(request) {

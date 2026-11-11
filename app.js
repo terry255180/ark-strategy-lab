@@ -1904,6 +1904,107 @@ async function saveEtfListToGoogleSheet() {
     throw new Error("Apps Script 尚未部署 ETF 清單儲存功能，請更新既有部署版本");
   return payload;
 }
+
+let strengthUniverse = [], strengthBenchmarkReturn = null;
+async function postGoogleSheetAction(action, extra = {}) {
+  const endpoint = CONFIG.googleSheets?.webAppUrl,
+    token = $("visionAccessToken")?.value.trim();
+  if (!endpoint) throw new Error("尚未設定 Google Sheet Apps Script 網址");
+  if (!token) throw new Error("請先在圖片辨識區輸入 AI 辨識密碼");
+  const response = await fetch(endpoint, {
+    method: "POST",
+    redirect: "follow",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ action, token, ...extra }),
+  });
+  if (!response.ok) throw new Error(`Google Sheet HTTP ${response.status}`);
+  const payload = await response.json();
+  if (!payload.ok) throw new Error(payload.error || "Google Sheet 操作失敗");
+  return payload;
+}
+function calculateRsRatio(etfReturn, benchmarkReturn) {
+  if (
+    etfReturn === null ||
+    etfReturn === "" ||
+    etfReturn === undefined ||
+    benchmarkReturn === null ||
+    benchmarkReturn === "" ||
+    benchmarkReturn === undefined
+  )
+    return null;
+  const etf = Number(etfReturn), benchmark = Number(benchmarkReturn);
+  if (!Number.isFinite(etf) || !Number.isFinite(benchmark) || benchmark <= -100)
+    return null;
+  return round(((1 + etf / 100) / (1 + benchmark / 100)) * 100, 2);
+}
+async function fetchSevenDayReturns(symbols) {
+  const unique = [...new Set(["0050", ...symbols])], results = [];
+  for (let index = 0; index < unique.length; index += 35) {
+    const batch = unique.slice(index, index + 35),
+      params = new URLSearchParams({ symbols: batch.join(",") }),
+      endpoint = `${CONFIG.performanceEndpoint}?${params}`,
+      response = await fetch(endpoint);
+    if (!response.ok) throw new Error(`行情服務 HTTP ${response.status}`);
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.error || "行情服務讀取失敗");
+    results.push(...(payload.items || []));
+  }
+  return results;
+}
+function renderStrengthTable(items = strengthUniverse) {
+  const valid = items.filter(item => Number.isFinite(item.rsRatio)),
+    stronger = valid.filter(item => item.rsRatio > 100).length,
+    weaker = valid.filter(item => item.rsRatio < 100).length,
+    benchmarkReturn = Number(strengthBenchmarkReturn);
+  $("strengthCount").textContent = `${items.length} 檔`;
+  $("strengthSummary").innerHTML = items.length
+    ? `<div><span>跑贏 0050</span><strong class="positive">${stronger} 檔</strong></div><div><span>落後 0050</span><strong class="negative">${weaker} 檔</strong></div><div><span>0050 七日報酬</span><strong>${Number.isFinite(benchmarkReturn) ? `${benchmarkReturn >= 0 ? "+" : ""}${benchmarkReturn.toFixed(2)}%` : "—"}</strong></div>`
+    : "";
+  $("strengthTable").innerHTML = items.length
+    ? `<div class="strength-row strength-head"><span>排名／ETF</span><span>7日報酬</span><span>0050</span><span>RS Ratio</span><span></span></div>${items.map((item, index) => {
+        const relativeClass = item.rsRatio > 100 ? "positive" : item.rsRatio < 100 ? "negative" : "neutral-value",
+          formatReturn = value => Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "—";
+        return `<div class="strength-row"><span><b>${index + 1}</b><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}</small></span><strong class="${Number(item.return7D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return7D)}</strong><span>${formatReturn(item.benchmarkReturn)}</span><strong class="rs-value ${relativeClass}">${Number.isFinite(item.rsRatio) ? item.rsRatio.toFixed(2) : "—"}</strong><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
+      }).join("")}`
+    : `<p class="note">目前沒有 ETF，請先同步或手動新增。</p>`;
+}
+async function refreshStrengthUniverse({ quiet = false } = {}) {
+  const button = $("strengthRefreshBtn");
+  button.disabled = true;
+  if (!quiet) $("strengthStatus").textContent = "正在從 Google Sheet 整理不重複 ETF…";
+  try {
+    const payload = await postGoogleSheetAction("getEtfUniverse"),
+      universe = (payload.items || []).filter(item => /^\d{4,6}[A-Z]?$/.test(item.symbol));
+    $("strengthStatus").textContent = `已從 ${payload.sheet || "Google Sheet"} 載入 ${universe.length} 檔，正在計算最近 7 個交易日…`;
+    const returns = await fetchSevenDayReturns(universe.map(item => item.symbol)),
+      bySymbol = new Map(returns.map(item => [item.symbol, item])),
+      benchmarkReturn = finiteOrNull(bySymbol.get("0050")?.return7D);
+    strengthBenchmarkReturn = benchmarkReturn;
+    strengthUniverse = universe.map(item => {
+      const performance = bySymbol.get(item.symbol) || {};
+      return {
+        ...item,
+        name: item.name || performance.name || ETF_NAME_BY_SYMBOL[item.symbol] || "",
+        return7D: finiteOrNull(performance.return7D),
+        benchmarkReturn,
+        rsRatio: calculateRsRatio(performance.return7D, benchmarkReturn),
+        latestDate: performance.latestDate || "",
+        error: performance.error || "",
+      };
+    }).sort((a, b) => (b.rsRatio ?? -Infinity) - (a.rsRatio ?? -Infinity));
+    renderStrengthTable();
+    const available = strengthUniverse.filter(item => Number.isFinite(item.rsRatio)).length;
+    $("strengthStatus").textContent = `完成：${available}／${strengthUniverse.length} 檔已有 7 日行情；基準日 ${bySymbol.get("0050")?.latestDate || "—"}。`;
+  } catch (error) {
+    $("strengthStatus").textContent = `無法載入動態清單：${String(error?.message || error)}。若顯示「不支援的操作」，請重新部署最新版 Apps Script。`;
+  } finally {
+    button.disabled = false;
+  }
+}
+async function updateStrengthUniverse(operation, symbol, name = "") {
+  await postGoogleSheetAction("updateEtfUniverse", { operation, symbol, name });
+  await refreshStrengthUniverse({ quiet: true });
+}
 async function applyOcrRows() {
   const numericFields = ["premium", "arkShares", "positionCapital"];
   ocrRows = ocrRows
@@ -5003,6 +5104,11 @@ function runSelfTests() {
       )
     );
   });
+  test("RS Ratio 以 0050 為 100 基準", () =>
+    calculateRsRatio(7, 5) === 101.9 &&
+    calculateRsRatio(5, 5) === 100 &&
+    calculateRsRatio(null, 5) === null,
+  );
   const v2 = window.BuyEngineV2.runBuyEngineSelfTests();
   v2.tests.forEach((x) => tests.push([`BUY V2 · ${x.name}`, x.ok]));
   const passed = tests.filter((t) => t[1]).length,
@@ -5103,6 +5209,40 @@ function bind() {
     "click",
     syncLatestTradingDayData,
   );
+  $("strengthRefreshBtn").addEventListener("click", () =>
+    refreshStrengthUniverse(),
+  );
+  $("strengthAddBtn").addEventListener("click", async () => {
+    const symbol = $("strengthSymbol").value
+        .toUpperCase()
+        .replace(/[^0-9A-Z]/g, ""),
+      name = $("strengthName").value.trim();
+    if (!/^\d{4,6}[A-Z]?$/.test(symbol)) {
+      $("strengthStatus").textContent = "請輸入正確的台灣 ETF 代號。";
+      return;
+    }
+    try {
+      $("strengthStatus").textContent = `正在新增 ${symbol}…`;
+      await updateStrengthUniverse("add", symbol, name);
+      $("strengthSymbol").value = "";
+      $("strengthName").value = "";
+    } catch (error) {
+      $("strengthStatus").textContent = `新增失敗：${String(error?.message || error)}`;
+    }
+  });
+  $("strengthTable").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-strength-remove]");
+    if (!button) return;
+    const symbol = button.dataset.strengthRemove;
+    button.disabled = true;
+    try {
+      $("strengthStatus").textContent = `正在從動態清單移除 ${symbol}…`;
+      await updateStrengthUniverse("remove", symbol);
+    } catch (error) {
+      $("strengthStatus").textContent = `刪除失敗：${String(error?.message || error)}`;
+      button.disabled = false;
+    }
+  });
 }
 async function init() {
   $("strategyVersion").textContent = CONFIG.strategyVersion;
@@ -5133,6 +5273,8 @@ async function init() {
   renderHistory();
   runSelfTests();
   if (CONFIG.googleSheets?.webAppUrl) await syncCentralData({ silent: true });
+  if (localStorage.getItem(CONFIG.storageKeys.visionToken))
+    await refreshStrengthUniverse({ quiet: true });
 }
 document.addEventListener("DOMContentLoaded", init);
 
@@ -5187,6 +5329,8 @@ window.ARKStrategyLab = {
   renderExecutionBuffer,
   renderExtremeMode,
   renderDecisionExplanation,
+  calculateRsRatio,
+  refreshStrengthUniverse,
   LocalDataProvider,
   GoogleSheetsDataProvider,
 };
