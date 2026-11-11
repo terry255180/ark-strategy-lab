@@ -1906,6 +1906,16 @@ async function saveEtfListToGoogleSheet() {
 }
 
 let strengthUniverse = [], strengthBenchmarkReturn = null;
+function normalizeEtfUniverseSymbol(value) {
+  let symbol = String(value || "")
+    .toUpperCase()
+    .replace(/[^0-9A-Z]/g, "");
+  if (/^\d+$/.test(symbol) && !symbol.startsWith("0")) {
+    const width = symbol.length <= 2 ? 4 : symbol.length === 3 ? 5 : 6;
+    symbol = symbol.padStart(width, "0");
+  }
+  return /^\d{4,6}[A-Z]?$/.test(symbol) ? symbol : "";
+}
 async function postGoogleSheetAction(action, extra = {}) {
   const endpoint = CONFIG.googleSheets?.webAppUrl,
     token =
@@ -1966,7 +1976,7 @@ function renderStrengthTable(items = strengthUniverse) {
     ? `<div class="strength-row strength-head"><span>排名／ETF</span><span>7日報酬</span><span>0050</span><span>RS Ratio</span><span></span></div>${items.map((item, index) => {
         const relativeClass = item.rsRatio > 100 ? "positive" : item.rsRatio < 100 ? "negative" : "neutral-value",
           formatReturn = value => Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "—";
-        return `<div class="strength-row"><span><b>${index + 1}</b><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}</small></span><strong class="${Number(item.return7D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return7D)}</strong><span>${formatReturn(item.benchmarkReturn)}</span><strong class="rs-value ${relativeClass}">${Number.isFinite(item.rsRatio) ? item.rsRatio.toFixed(2) : "—"}</strong><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
+        return `<div class="strength-row"><span><b>${index + 1}</b><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}</small></span><span class="strength-return"><strong class="${Number(item.return7D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return7D)}</strong>${item.error ? `<small title="${escapeHtml(item.error)}">查無行情</small>` : ""}</span><span>${formatReturn(item.benchmarkReturn)}</span><strong class="rs-value ${relativeClass}">${Number.isFinite(item.rsRatio) ? item.rsRatio.toFixed(2) : "—"}</strong><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
       }).join("")}`
     : `<p class="note">目前沒有 ETF，請先同步或手動新增。</p>`;
 }
@@ -1976,7 +1986,19 @@ async function refreshStrengthUniverse({ quiet = false } = {}) {
   if (!quiet) $("strengthStatus").textContent = "正在從 Google Sheet 整理不重複 ETF…";
   try {
     const payload = await postGoogleSheetAction("getEtfUniverse"),
-      universe = (payload.items || []).filter(item => /^\d{4,6}[A-Z]?$/.test(item.symbol));
+      universeMap = new Map();
+    (payload.items || []).forEach(item => {
+      const symbol = normalizeEtfUniverseSymbol(item.symbol);
+      if (!symbol) return;
+      const old = universeMap.get(symbol);
+      universeMap.set(symbol, {
+        ...old,
+        ...item,
+        symbol,
+        name: item.name || old?.name || "",
+      });
+    });
+    const universe = [...universeMap.values()];
     $("strengthStatus").textContent = `已從 ${payload.sheet || "Google Sheet"} 載入 ${universe.length} 檔，正在計算最近 7 個交易日…`;
     const returns = await fetchSevenDayReturns(universe.map(item => item.symbol)),
       bySymbol = new Map(returns.map(item => [item.symbol, item])),
@@ -5111,6 +5133,11 @@ function runSelfTests() {
     calculateRsRatio(5, 5) === 100 &&
     calculateRsRatio(null, 5) === null,
   );
+  test("ETF 數字代號遺失前導零時會自動修復", () =>
+    normalizeEtfUniverseSymbol("9816") === "009816" &&
+    normalizeEtfUniverseSymbol("921") === "00921" &&
+    normalizeEtfUniverseSymbol("50") === "0050",
+  );
   const v2 = window.BuyEngineV2.runBuyEngineSelfTests();
   v2.tests.forEach((x) => tests.push([`BUY V2 · ${x.name}`, x.ok]));
   const passed = tests.filter((t) => t[1]).length,
@@ -5216,9 +5243,7 @@ function bind() {
     refreshStrengthUniverse(),
   );
   $("strengthAddBtn").addEventListener("click", async () => {
-    const symbol = $("strengthSymbol").value
-        .toUpperCase()
-        .replace(/[^0-9A-Z]/g, ""),
+    const symbol = normalizeEtfUniverseSymbol($("strengthSymbol").value),
       name = $("strengthName").value.trim();
     if (!/^\d{4,6}[A-Z]?$/.test(symbol)) {
       $("strengthStatus").textContent = "請輸入正確的台灣 ETF 代號。";

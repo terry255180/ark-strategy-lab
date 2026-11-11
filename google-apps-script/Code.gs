@@ -252,6 +252,7 @@ function ensureEtfUniverseSheet_(spreadsheet) {
     sheet.getRange(1, 1, 1, 6).setValues([['股票代號', '股票名稱', '啟用', '來源', '更新時間', '備註']]).setFontWeight('bold').setBackground('#123b44').setFontColor('#ffffff');
     sheet.setFrozenRows(1);
   }
+  sheet.getRange('A:A').setNumberFormat('@');
   return sheet;
 }
 
@@ -276,7 +277,11 @@ function writeEtfUniverseState_(sheet, saved) {
 }
 
 function cleanEtfSymbol_(value) {
-  const symbol = String(value || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  let symbol = String(value || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  if (/^\d+$/.test(symbol) && symbol.charAt(0) !== '0') {
+    const width = symbol.length <= 2 ? 4 : symbol.length === 3 ? 5 : 6;
+    symbol = Array(Math.max(0, width - symbol.length) + 1).join('0') + symbol;
+  }
   return /^\d{4,6}[A-Z]?$/.test(symbol) ? symbol : '';
 }
 
@@ -320,6 +325,7 @@ function saveEtfDailyList_(request) {
     } else if (sheet.getLastRow() === 0) {
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     }
+    sheet.getRange('C:C').setNumberFormat('@');
     const symbols = new Set(rows.map(row => row[2]));
     if (sheet.getLastRow() > 1) {
       const existing = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getDisplayValues();
