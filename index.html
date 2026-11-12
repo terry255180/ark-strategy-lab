@@ -525,7 +525,7 @@
           <div class="strength-table-wrap">
             <div id="strengthTable" class="strength-table"></div>
           </div>
-          <p class="research-warning">系統以每日調整價建立連續 RS20 曲線，再計算 MA3／MA8、5日與10日迴歸斜率及距20日高點差距。RS20連續3日低於100且10日斜率為負列為轉換標的；雙斜率為負、跌破MA8且距高點至少2點列為分批調節；MA3剛跌破MA8或5日斜率剛轉負列為觀察。槓桿 ETF 會將每日報酬除以槓桿倍數後重新累積校正淨值，再建立RS20曲線。這是相對強弱研究，不代表未來報酬保證。</p>
+          <p class="research-warning">0050近20日報酬≤−5%時進入大盤急跌模式。此時一般弱勢降級觀察；ETF若同步下跌但未落後0050達2.5點，標示「市場同步下跌」且不因RS訊號賣出。急跌盤只有在RS20連續3日低於98、雙斜率為負、校正報酬落後0050至少3點、且距RS高點至少3點時才維持「分批調節」。轉換標的須連續3日低於100、10日斜率為負，且至少落後0050 2.5點。槓桿ETF使用逐日校正報酬比較。</p>
         </div>
       </details>
 
@@ -584,7 +584,7 @@
     <script src="config.js?v=4.8"></script>
     <script src="strategy-engine.js?v=1.0"></script>
     <script src="buy-engine-v2.js?v=3.0"></script>
-    <script src="app.js?v=8.7"></script>
+    <script src="app.js?v=8.8"></script>
     <script src="rebalance.js?v=2.8"></script>
     <script src="rebalance-ocr.js?v=1.9"></script>
   </body>
