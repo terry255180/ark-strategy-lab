@@ -2002,18 +2002,15 @@ function analyzeRs20Trend(points = [], context = {}) {
     crossedDown = ma3 !== null && ma8 !== null && previousMa3 !== null && previousMa8 !== null && ma3 < ma8 && previousMa3 >= previousMa8,
     slopeTurnedDown = slope5 !== null && previousSlope5 !== null && slope5 < 0 && previousSlope5 >= 0,
     benchmarkReturn = finiteOrNull(context.benchmarkReturn), etfReturn = finiteOrNull(context.etfAdjustedReturn),
-    relativeLag = benchmarkReturn !== null && etfReturn !== null ? round(benchmarkReturn - etfReturn, 2) : null,
-    marketCrash = benchmarkReturn !== null && benchmarkReturn <= -5;
+    relativeLag = benchmarkReturn !== null && etfReturn !== null ? round(benchmarkReturn - etfReturn, 2) : null;
   const below100Days = consecutiveBelow100 === -1 ? points.length : consecutiveBelow100,
-    metrics = { current, ma3, ma8, slope5, slope10, highest, gap, below100, below98FiveDays, below100Days, crossedDown, slopeTurnedDown, benchmarkReturn, etfReturn, relativeLag, marketCrash };
+    metrics = { current, ma3, ma8, slope5, slope10, highest, gap, below100, below98FiveDays, below100Days, crossedDown, slopeTurnedDown, benchmarkReturn, etfReturn, relativeLag };
   if ([current, ma3, ma8, slope5, slope10].some(value => value === null))
     return { ...metrics, key: "INSUFFICIENT", label: "資料不足", detail: "尚無完整每日 RS20 曲線" };
   if (below98FiveDays && relativeLag !== null && relativeLag >= 3)
     return { ...metrics, key: "ROTATE", label: "轉換標的", detail: `衛星退出：連續5日低於98，且20日落後0050 ${relativeLag.toFixed(2)}點` };
   if (current > 100 && slope10 > 0)
     return { ...metrics, key: "STRONG", label: "持續轉強", detail: "保留／加碼衛星ETF：RS20高於100且10日斜率為正" };
-  if (marketCrash && etfReturn !== null && etfReturn < 0 && relativeLag !== null && relativeLag < 2.5)
-    return { ...metrics, key: "MARKET_DOWN", label: "市場同步下跌", detail: `暫緩轉換：0050近20日 ${benchmarkReturn.toFixed(2)}%，本檔僅落後 ${relativeLag.toFixed(2)}點` };
   if (below100 && slope10 < 0)
     return { ...metrics, key: "WEAK", label: "相對弱勢", detail: `分批轉回0050：連續${below100Days}日低於100，且10日斜率為負` };
   if ((current >= 98 && current <= 100) || (current < 100 && below100Days < 3))
@@ -5234,10 +5231,10 @@ function runSelfTests() {
       analyzeRs20Trend(points([104,103,102,101,100,99,98.5,97.9,97.5,97,96.8,96.5]), { benchmarkReturn: -2, etfAdjustedReturn: -6 }).key === "ROTATE"
     );
   });
-  test("大盤急跌且未明顯落後會暫緩轉換", () => {
+  test("不論大盤漲跌皆只依衛星相對績效評級", () => {
     const points = values => values.map((value, index) => ({ date: String(index), value }));
-    const synchronous = analyzeRs20Trend(points([103,102.8,102.6,102.4,102.2,102,101.8,101.6,101.4,100.5,99.8]), { benchmarkReturn: -6, etfAdjustedReturn: -7 });
-    return synchronous.key === "MARKET_DOWN";
+    const fallingMarket = analyzeRs20Trend(points([103,102.8,102.6,102.4,102.2,102,101.8,101.6,100.5,99.8,99.5]), { benchmarkReturn: -6, etfAdjustedReturn: -7 });
+    return fallingMarket.key === "WEAK";
   });
   test("2倍ETF會先逐日除以槓桿再建立RS20", () => {
     const benchmark = [], etf = [];
