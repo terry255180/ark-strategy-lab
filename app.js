@@ -1949,27 +1949,57 @@ function calculateRsRatio(etfReturn, benchmarkReturn) {
     return null;
   return round(((1 + etf / 100) / (1 + benchmark / 100)) * 100, 2);
 }
-function calculateLeverageAdjustedReturn(value, leverage = 1) {
-  const result = finiteOrNull(value), multiple = Math.max(1, Number(leverage) || 1);
-  if (result === null || result <= -100) return null;
-  return round((Math.pow(1 + result / 100, 1 / multiple) - 1) * 100, 4);
+function calculateDailyRs20(etfSeries = [], benchmarkSeries = [], leverage = 1) {
+  const benchmark = new Map((benchmarkSeries || []).map(point => [point.date, Number(point.value)])),
+    aligned = (etfSeries || []).map(point => ({ date: point.date, etf: Number(point.value), benchmark: benchmark.get(point.date) })).filter(point => point.etf > 0 && point.benchmark > 0),
+    multiple = Math.max(1, Number(leverage) || 1), etfIndex = [100], benchmarkIndex = [100], result = [];
+  for (let index = 1; index < aligned.length; index++) {
+    const etfDaily = aligned[index].etf / aligned[index - 1].etf - 1,
+      benchmarkDaily = aligned[index].benchmark / aligned[index - 1].benchmark - 1,
+      adjustedEtfDaily = etfDaily / multiple;
+    etfIndex[index] = etfIndex[index - 1] * Math.max(0.0001, 1 + adjustedEtfDaily);
+    benchmarkIndex[index] = benchmarkIndex[index - 1] * Math.max(0.0001, 1 + benchmarkDaily);
+    if (index >= 20) {
+      const etf20 = etfIndex[index] / etfIndex[index - 20],
+        benchmark20 = benchmarkIndex[index] / benchmarkIndex[index - 20];
+      result.push({ date: aligned[index].date, value: round((etf20 / benchmark20) * 100, 4) });
+    }
+  }
+  return result;
 }
-function classifyRs20Trend(values = {}) {
-  const current = finiteOrNull(values[0]), d3 = finiteOrNull(values[3]),
-    d5 = finiteOrNull(values[5]), d10 = finiteOrNull(values[10]),
-    available = [current, d3, d5, d10, finiteOrNull(values[20])].filter(value => value !== null);
-  if (current === null || available.length < 4)
-    return { key: "INSUFFICIENT", label: "資料不足", detail: "尚無完整 RS20 軌跡", highest: null, gap: null };
-  const highest = Math.max(...available), gap = round(highest - current, 2);
-  if (current < 100)
-    return { key: "ROTATE", label: "轉換標的", detail: `RS20 已低於 100；距觀察期高點 ${gap.toFixed(2)}`, highest, gap };
-  if (current < d3 && d3 < d5 && d5 < d10)
-    return { key: "REDUCE", label: "分批調節", detail: `持續下降；最高 ${highest.toFixed(2)}，目前低 ${gap.toFixed(2)}`, highest, gap };
-  if (current < d3 && d3 > d5)
-    return { key: "WATCH", label: "觀察", detail: `由上升轉為下降；距高點 ${gap.toFixed(2)}`, highest, gap };
-  if (current > d3 && d3 > d5)
-    return { key: "STRONG", label: "持續轉強", detail: "短中期 RS20 同步上升", highest, gap };
-  return { key: "NEUTRAL", label: "震盪", detail: `方向尚未連續；距高點 ${gap.toFixed(2)}`, highest, gap };
+function rsSlope(points, length, endOffset = 0) {
+  const values = points.slice(0, Math.max(0, points.length - endOffset)).slice(-length).map(point => Number(point.value));
+  if (values.length < length) return null;
+  const meanX = (values.length - 1) / 2, meanY = values.reduce((sum, value) => sum + value, 0) / values.length;
+  let numerator = 0, denominator = 0;
+  values.forEach((value, index) => { numerator += (index - meanX) * (value - meanY); denominator += (index - meanX) ** 2; });
+  return denominator ? round(numerator / denominator, 4) : 0;
+}
+function rsAverage(points, length, endOffset = 0) {
+  const values = points.slice(0, Math.max(0, points.length - endOffset)).slice(-length).map(point => Number(point.value));
+  return values.length === length ? round(values.reduce((sum, value) => sum + value, 0) / length, 4) : null;
+}
+function analyzeRs20Trend(points = []) {
+  const current = finiteOrNull(points.at(-1)?.value), ma3 = rsAverage(points, 3), ma8 = rsAverage(points, 8),
+    previousMa3 = rsAverage(points, 3, 1), previousMa8 = rsAverage(points, 8, 1),
+    slope5 = rsSlope(points, 5), slope10 = rsSlope(points, 10), previousSlope5 = rsSlope(points, 5, 1),
+    recent = points.slice(-20).map(point => Number(point.value)).filter(Number.isFinite),
+    highest = recent.length ? Math.max(...recent) : null, gap = current !== null && highest !== null ? round(highest - current, 2) : null,
+    last3 = points.slice(-3).map(point => Number(point.value)), below100 = last3.length === 3 && last3.every(value => value < 100),
+    crossedDown = ma3 !== null && ma8 !== null && previousMa3 !== null && previousMa8 !== null && ma3 < ma8 && previousMa3 >= previousMa8,
+    slopeTurnedDown = slope5 !== null && previousSlope5 !== null && slope5 < 0 && previousSlope5 >= 0;
+  const metrics = { current, ma3, ma8, slope5, slope10, highest, gap, below100, crossedDown, slopeTurnedDown };
+  if ([current, ma3, ma8, slope5, slope10].some(value => value === null))
+    return { ...metrics, key: "INSUFFICIENT", label: "資料不足", detail: "尚無完整每日 RS20 曲線" };
+  if (below100 && slope10 < 0)
+    return { ...metrics, key: "ROTATE", label: "轉換標的", detail: `連續3日低於100且10日斜率為負；距高點 ${gap.toFixed(2)}` };
+  if (slope5 < 0 && slope10 < 0 && current < ma8 && gap >= 2)
+    return { ...metrics, key: "REDUCE", label: "分批調節", detail: `雙斜率為負且跌破MA8；最高 ${highest.toFixed(2)}，回落 ${gap.toFixed(2)}` };
+  if (crossedDown || slopeTurnedDown)
+    return { ...metrics, key: "WATCH", label: "觀察", detail: crossedDown ? "MA3剛跌破MA8，不立即調節" : "5日斜率剛由正轉負，不立即調節" };
+  if (current > 100 && ma3 > ma8 && slope5 > 0 && slope10 > 0)
+    return { ...metrics, key: "STRONG", label: "持續轉強", detail: "RS20高於100、MA3>MA8且雙斜率為正" };
+  return { ...metrics, key: "NEUTRAL", label: "震盪", detail: "均線與斜率方向不一致" };
 }
 async function fetchTwentyDayReturns(symbols) {
   const unique = [...new Set(["0050", ...symbols])], results = [];
@@ -1995,11 +2025,13 @@ function renderStrengthTable(items = strengthUniverse) {
     ? `<div><span>跑贏 0050</span><strong class="positive">${stronger} 檔</strong></div><div><span>落後 0050</span><strong class="negative">${weaker} 檔</strong></div><div><span>0050 20日報酬</span><strong>${Number.isFinite(benchmarkReturn) ? `${benchmarkReturn >= 0 ? "+" : ""}${benchmarkReturn.toFixed(2)}%` : "—"}</strong></div>`
     : "";
   $("strengthTable").innerHTML = items.length
-    ? `<div class="strength-row strength-head"><span>排名／ETF</span><span>RS20 軌跡（現／3／5／10／20日前）</span><span>20日報酬</span><span>趨勢評級</span><span></span></div>${items.map((item, index) => {
+    ? `<div class="strength-row strength-head"><span>排名／ETF</span><span>每日 RS20 趨勢指標</span><span>20日報酬</span><span>趨勢評級</span><span></span></div>${items.map((item, index) => {
         const formatReturn = value => Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "—",
-          rsTrack = [0, 3, 5, 10, 20].map(offset => Number.isFinite(item.rsTimeline?.[offset]) ? item.rsTimeline[offset].toFixed(2) : "—").join("／"),
+          metric = item.rating,
+          rsTrack = `RS ${Number.isFinite(metric.current) ? metric.current.toFixed(2) : "—"} · MA3 ${Number.isFinite(metric.ma3) ? metric.ma3.toFixed(2) : "—"} · MA8 ${Number.isFinite(metric.ma8) ? metric.ma8.toFixed(2) : "—"}`,
+          slopes = `斜率5 ${Number.isFinite(metric.slope5) ? metric.slope5.toFixed(3) : "—"} · 斜率10 ${Number.isFinite(metric.slope10) ? metric.slope10.toFixed(3) : "—"}`,
           leveragedNote = item.leverage > 1 ? `<small>已做 ${item.leverage}x 槓桿校正</small>` : "";
-        return `<div class="strength-row"><span><b>${index + 1}</b><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}${item.leverage > 1 ? ` · ${item.leverage}x` : ""}</small></span><span class="rs-track"><strong>${rsTrack}</strong>${leveragedNote}</span><span class="strength-return"><strong class="${Number(item.return20D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return20D)}</strong>${item.error ? `<small title="${escapeHtml(item.error)}">查無行情</small>` : ""}</span><span class="strength-rating rating-${item.rating.key.toLowerCase()}"><strong>${escapeHtml(item.rating.label)}</strong><small>${escapeHtml(item.rating.detail)}</small></span><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
+        return `<div class="strength-row"><span><b>${index + 1}</b><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}${item.leverage > 1 ? ` · ${item.leverage}x` : ""}</small></span><span class="rs-track"><strong>${rsTrack}</strong><small>${slopes}</small>${leveragedNote}</span><span class="strength-return"><strong class="${Number(item.return20D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return20D)}</strong>${item.error ? `<small title="${escapeHtml(item.error)}">查無行情</small>` : ""}</span><span class="strength-rating rating-${item.rating.key.toLowerCase()}"><strong>${escapeHtml(item.rating.label)}</strong><small>${escapeHtml(item.rating.detail)}</small></span><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
       }).join("")}`
     : `<p class="note">目前沒有 ETF，請先同步或手動新增。</p>`;
 }
@@ -2026,27 +2058,22 @@ async function refreshStrengthUniverse({ quiet = false } = {}) {
     const returns = await fetchTwentyDayReturns(universe.map(item => item.symbol)),
       bySymbol = new Map(returns.map(item => [item.symbol, item])),
       benchmark = bySymbol.get("0050") || {},
-      benchmarkReturn = finiteOrNull(benchmark.return20D),
-      benchmarkOffsets = benchmark.return20DOffsets || {};
+      benchmarkReturn = finiteOrNull(benchmark.return20D);
     strengthBenchmarkReturn = benchmarkReturn;
     strengthUniverse = universe.map(item => {
       const performance = bySymbol.get(item.symbol) || {},
         meta = window.BuyEngineV2.ETF_MASTER[item.symbol] || {},
         leverage = meta.leveraged || /L$/.test(item.symbol) ? 2 : 1,
-        returnsByOffset = performance.return20DOffsets || {},
-        rsTimeline = Object.fromEntries([0, 3, 5, 10, 20].map(offset => {
-          const adjusted = calculateLeverageAdjustedReturn(returnsByOffset[offset], leverage);
-          return [offset, calculateRsRatio(adjusted, benchmarkOffsets[offset])];
-        })),
-        rating = classifyRs20Trend(rsTimeline);
+        rsSeries = calculateDailyRs20(performance.recentSeries, benchmark.recentSeries, leverage),
+        rating = analyzeRs20Trend(rsSeries);
       return {
         ...item,
         name: item.name || performance.name || ETF_NAME_BY_SYMBOL[item.symbol] || "",
         return20D: finiteOrNull(performance.return20D),
         benchmarkReturn,
         leverage,
-        rsTimeline,
-        rsRatio: rsTimeline[0],
+        rsSeries,
+        rsRatio: rating.current,
         rating,
         latestDate: performance.latestDate || "",
         error: performance.error || "",
@@ -5174,14 +5201,24 @@ function runSelfTests() {
     normalizeEtfUniverseSymbol("921") === "00921" &&
     normalizeEtfUniverseSymbol("50") === "0050",
   );
-  test("RS20 趨勢評級符合轉折、連跌與低於100規則", () =>
-    classifyRs20Trend({ 0: 101, 3: 103, 5: 102, 10: 101, 20: 99 }).key === "WATCH" &&
-    classifyRs20Trend({ 0: 101, 3: 102, 5: 103, 10: 104, 20: 105 }).key === "REDUCE" &&
-    classifyRs20Trend({ 0: 99, 3: 101, 5: 102, 10: 103, 20: 104 }).key === "ROTATE",
-  );
-  test("2倍槓桿報酬會還原單位曝險", () =>
-    Math.abs(calculateLeverageAdjustedReturn(21, 2) - 10) < 0.001,
-  );
+  test("每日 RS20 趨勢評級符合轉折、連跌與低於100規則", () => {
+    const points = values => values.map((value, index) => ({ date: String(index), value }));
+    return (
+      analyzeRs20Trend(points([100,101,102,103,104,105,106,107,108,109,104])).key === "WATCH" &&
+      analyzeRs20Trend(points([110,109.5,109,108.5,108,107.5,107,106.5,106,105.5,105,104.5,104,103.5,103,102.5,102,101.5,101,100.5])).key === "REDUCE" &&
+      analyzeRs20Trend(points([104,103.5,103,102.5,102,101.5,101,100.5,100,99.5,99,98.5])).key === "ROTATE"
+    );
+  });
+  test("2倍ETF會先逐日除以槓桿再建立RS20", () => {
+    const benchmark = [], etf = [];
+    let price = 100;
+    for (let index = 0; index < 30; index++) {
+      benchmark.push({ date: String(index), value: 100 });
+      etf.push({ date: String(index), value: price });
+      price *= 1.02;
+    }
+    return Math.abs(calculateDailyRs20(etf, benchmark, 2).at(-1).value - 122.019) < 0.01;
+  });
   const v2 = window.BuyEngineV2.runBuyEngineSelfTests();
   v2.tests.forEach((x) => tests.push([`BUY V2 · ${x.name}`, x.ok]));
   const passed = tests.filter((t) => t[1]).length,
@@ -5402,8 +5439,8 @@ window.ARKStrategyLab = {
   renderExtremeMode,
   renderDecisionExplanation,
   calculateRsRatio,
-  calculateLeverageAdjustedReturn,
-  classifyRs20Trend,
+  calculateDailyRs20,
+  analyzeRs20Trend,
   refreshStrengthUniverse,
   LocalDataProvider,
   GoogleSheetsDataProvider,

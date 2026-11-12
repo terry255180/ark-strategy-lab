@@ -525,7 +525,7 @@
           <div class="strength-table-wrap">
             <div id="strengthTable" class="strength-table"></div>
           </div>
-          <p class="research-warning">RS20 軌跡分別顯示目前及 3／5／10／20 個交易日前，各自往前 20 個交易日的相對強弱。RS Ratio＝(1＋ETF 20日報酬) ÷ (1＋0050 同期20日報酬) × 100。低於 100 列為轉換標的；連續下降列為分批調節；由升轉降列為觀察。槓桿 ETF 會先以幾何方式還原單位曝險再計算 RS，避免倍數天然放大排名。這是相對強弱研究，不代表未來報酬保證。</p>
+          <p class="research-warning">系統以每日調整價建立連續 RS20 曲線，再計算 MA3／MA8、5日與10日迴歸斜率及距20日高點差距。RS20連續3日低於100且10日斜率為負列為轉換標的；雙斜率為負、跌破MA8且距高點至少2點列為分批調節；MA3剛跌破MA8或5日斜率剛轉負列為觀察。槓桿 ETF 會將每日報酬除以槓桿倍數後重新累積校正淨值，再建立RS20曲線。這是相對強弱研究，不代表未來報酬保證。</p>
         </div>
       </details>
 
@@ -584,7 +584,7 @@
     <script src="config.js?v=4.8"></script>
     <script src="strategy-engine.js?v=1.0"></script>
     <script src="buy-engine-v2.js?v=3.0"></script>
-    <script src="app.js?v=8.6"></script>
+    <script src="app.js?v=8.7"></script>
     <script src="rebalance.js?v=2.8"></script>
     <script src="rebalance-ocr.js?v=1.9"></script>
   </body>

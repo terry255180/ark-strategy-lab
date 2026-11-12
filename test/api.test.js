@@ -32,7 +32,7 @@ test("持股 OCR 只保留名稱、代號、股數與總成本",()=>{
 
 test("Yahoo 報酬結果包含最新價格與三段期間",()=>{
   const item=calculateReturns("0050",yahooFixture());
-  assert.ok(item.latestPrice>0);assert.equal(typeof item.return20D,"number");assert.deepEqual(Object.keys(item.return20DOffsets),["0","3","5","10","20"]);assert.match(item.return20DStart,/^\d{4}-\d{2}-\d{2}$/);assert.equal(typeof item.ytd,"number");assert.equal(typeof item.oneYear,"number");assert.equal(typeof item.threeYear,"number");
+  assert.ok(item.latestPrice>0);assert.equal(typeof item.return20D,"number");assert.deepEqual(Object.keys(item.return20DOffsets),["0","3","5","10","20"]);assert.equal(item.recentSeries.length,80);assert.match(item.recentSeries.at(-1).date,/^\d{4}-\d{2}-\d{2}$/);assert.match(item.return20DStart,/^\d{4}-\d{2}-\d{2}$/);assert.equal(typeof item.ytd,"number");assert.equal(typeof item.oneYear,"number");assert.equal(typeof item.threeYear,"number");
 });
 
 test("代號清理會去重並排除無效內容",()=>assert.deepEqual(normalizeSymbols("0050,0050,abc,00631L"),["0050","00631L"]));
