@@ -1975,9 +1975,9 @@ function analyzeRs20Trend(points = []) {
     metrics = { current, change5D, excessPerformance };
   if (current === null)
     return { ...metrics, key: "INSUFFICIENT", label: "資料不足", detail: "尚無可用RS20" };
-  if (current < 95)
+  if (current <= 95)
     return { ...metrics, key: "ROTATE", label: "轉換標的", detail: `衛星落後0050 ${Math.abs(excessPerformance).toFixed(2)}%，轉回0050或更強標的` };
-  if (current > 105)
+  if (current >= 105)
     return { ...metrics, key: "STRONG", label: "持續領先", detail: `衛星超越0050 ${excessPerformance.toFixed(2)}%，保留衛星ETF` };
   return { ...metrics, key: "WATCH", label: "觀察", detail: `RS20位於95～105觀察區，暫不調整` };
 }
@@ -1997,21 +1997,21 @@ async function fetchTwentyDayReturns(symbols) {
 }
 function renderStrengthTable(items = strengthUniverse) {
   const valid = items.filter(item => Number.isFinite(item.rsRatio)),
-    stronger = valid.filter(item => item.rsRatio > 105).length,
-    watching = valid.filter(item => item.rsRatio >= 95 && item.rsRatio <= 105).length,
-    rotating = valid.filter(item => item.rsRatio < 95).length;
+    stronger = valid.filter(item => item.rsRatio >= 105).length,
+    watching = valid.filter(item => item.rsRatio > 95 && item.rsRatio < 105).length,
+    rotating = valid.filter(item => item.rsRatio <= 95).length;
   $("strengthCount").textContent = `${items.length} 檔`;
   $("strengthSummary").innerHTML = items.length
-    ? `<div><span>持續領先 RS&gt;105</span><strong class="positive">${stronger} 檔</strong></div><div><span>觀察區 95～105</span><strong>${watching} 檔</strong></div><div><span>轉換標的 RS&lt;95</span><strong class="negative">${rotating} 檔</strong></div>`
+    ? `<div><span>持續領先 RS≥105</span><strong class="positive">${stronger} 檔</strong></div><div><span>觀察區 95～105</span><strong>${watching} 檔</strong></div><div><span>轉換標的 RS≤95</span><strong class="negative">${rotating} 檔</strong></div>`
     : "";
   $("strengthTable").innerHTML = items.length
     ? `<div class="strength-row strength-head"><span>排名／ETF</span><span>RS Ratio</span><span>相對0050</span><span>20日報酬</span><span>評級／動作</span><span></span></div>${items.map((item, index) => {
         const formatReturn = value => Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "—",
           metric = item.rating,
-          rsClass = metric.current > 105 ? "positive" : metric.current < 95 ? "negative" : "neutral-value",
+          rsClass = metric.current >= 105 ? "rs-good" : metric.current <= 95 ? "rs-bad" : "rs-watch",
           direction = Number.isFinite(metric.change5D) ? `近5日 ${metric.change5D >= 0 ? "+" : ""}${metric.change5D.toFixed(2)}` : "近5日 —",
           leveragedNote = item.leverage > 1 ? `<small>已做 ${item.leverage}x 槓桿校正</small>` : "";
-        return `<div class="strength-row"><span class="strength-identity"><b>${index + 1}</b><span><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}${item.leverage > 1 ? ` · ${item.leverage}x` : ""}</small></span></span><span class="rs-focus"><strong class="${rsClass}">${Number.isFinite(metric.current) ? metric.current.toFixed(2) : "—"}</strong><small>${direction}</small>${leveragedNote}</span><strong class="rs-excess ${Number(metric.excessPerformance) >= 0 ? "positive" : "negative"}">${formatReturn(metric.excessPerformance)}</strong><span class="strength-return"><strong class="${Number(item.return20D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return20D)}</strong>${item.error ? `<small title="${escapeHtml(item.error)}">查無行情</small>` : ""}</span><span class="strength-rating rating-${item.rating.key.toLowerCase()}"><strong>${escapeHtml(item.rating.label)}</strong><small>${escapeHtml(item.rating.detail)}</small></span><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
+        return `<div class="strength-row"><span class="strength-identity"><b>${index + 1}</b><span><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}${item.leverage > 1 ? ` · ${item.leverage}x` : ""}</small></span></span><span class="rs-focus"><strong class="${rsClass}">${Number.isFinite(metric.current) ? metric.current.toFixed(2) : "—"}</strong><small>${direction}</small>${leveragedNote}</span><strong class="rs-excess ${Number(metric.excessPerformance) >= 0 ? "tw-positive" : "tw-negative"}">${formatReturn(metric.excessPerformance)}</strong><span class="strength-return"><strong class="${Number(item.return20D) >= 0 ? "tw-positive" : "tw-negative"}">${formatReturn(item.return20D)}</strong>${item.error ? `<small title="${escapeHtml(item.error)}">查無行情</small>` : ""}</span><span class="strength-rating rating-${item.rating.key.toLowerCase()}"><strong>${escapeHtml(item.rating.label)}</strong><small>${escapeHtml(item.rating.detail)}</small></span><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
       }).join("")}`
     : `<p class="note">目前沒有 ETF，請先同步或手動新增。</p>`;
 }
@@ -5187,7 +5187,8 @@ function runSelfTests() {
       analyzeRs20Trend(points([100,101,103,104,105,106])).key === "STRONG" &&
       analyzeRs20Trend(points([110,108,105,103,101,99])).key === "WATCH" &&
       analyzeRs20Trend(points([100,99,98,97,96,94.99])).key === "ROTATE" &&
-      analyzeRs20Trend(points([100,100,100,100,100,105])).key === "WATCH"
+      analyzeRs20Trend(points([100,100,100,100,100,105])).key === "STRONG" &&
+      analyzeRs20Trend(points([100,99,98,97,96,95])).key === "ROTATE"
     );
   });
   test("2倍ETF會先逐日除以槓桿再建立RS20", () => {
