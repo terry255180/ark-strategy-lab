@@ -1949,6 +1949,28 @@ function calculateRsRatio(etfReturn, benchmarkReturn) {
     return null;
   return round(((1 + etf / 100) / (1 + benchmark / 100)) * 100, 2);
 }
+function calculateLeverageAdjustedReturn(value, leverage = 1) {
+  const result = finiteOrNull(value), multiple = Math.max(1, Number(leverage) || 1);
+  if (result === null || result <= -100) return null;
+  return round((Math.pow(1 + result / 100, 1 / multiple) - 1) * 100, 4);
+}
+function classifyRs20Trend(values = {}) {
+  const current = finiteOrNull(values[0]), d3 = finiteOrNull(values[3]),
+    d5 = finiteOrNull(values[5]), d10 = finiteOrNull(values[10]),
+    available = [current, d3, d5, d10, finiteOrNull(values[20])].filter(value => value !== null);
+  if (current === null || available.length < 4)
+    return { key: "INSUFFICIENT", label: "資料不足", detail: "尚無完整 RS20 軌跡", highest: null, gap: null };
+  const highest = Math.max(...available), gap = round(highest - current, 2);
+  if (current < 100)
+    return { key: "ROTATE", label: "轉換標的", detail: `RS20 已低於 100；距觀察期高點 ${gap.toFixed(2)}`, highest, gap };
+  if (current < d3 && d3 < d5 && d5 < d10)
+    return { key: "REDUCE", label: "分批調節", detail: `持續下降；最高 ${highest.toFixed(2)}，目前低 ${gap.toFixed(2)}`, highest, gap };
+  if (current < d3 && d3 > d5)
+    return { key: "WATCH", label: "觀察", detail: `由上升轉為下降；距高點 ${gap.toFixed(2)}`, highest, gap };
+  if (current > d3 && d3 > d5)
+    return { key: "STRONG", label: "持續轉強", detail: "短中期 RS20 同步上升", highest, gap };
+  return { key: "NEUTRAL", label: "震盪", detail: `方向尚未連續；距高點 ${gap.toFixed(2)}`, highest, gap };
+}
 async function fetchTwentyDayReturns(symbols) {
   const unique = [...new Set(["0050", ...symbols])], results = [];
   for (let index = 0; index < unique.length; index += 35) {
@@ -1973,10 +1995,11 @@ function renderStrengthTable(items = strengthUniverse) {
     ? `<div><span>跑贏 0050</span><strong class="positive">${stronger} 檔</strong></div><div><span>落後 0050</span><strong class="negative">${weaker} 檔</strong></div><div><span>0050 20日報酬</span><strong>${Number.isFinite(benchmarkReturn) ? `${benchmarkReturn >= 0 ? "+" : ""}${benchmarkReturn.toFixed(2)}%` : "—"}</strong></div>`
     : "";
   $("strengthTable").innerHTML = items.length
-    ? `<div class="strength-row strength-head"><span>排名／ETF</span><span>20日報酬</span><span>0050</span><span>RS Ratio</span><span></span></div>${items.map((item, index) => {
-        const relativeClass = item.rsRatio > 100 ? "positive" : item.rsRatio < 100 ? "negative" : "neutral-value",
-          formatReturn = value => Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "—";
-        return `<div class="strength-row"><span><b>${index + 1}</b><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}</small></span><span class="strength-return"><strong class="${Number(item.return20D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return20D)}</strong>${item.error ? `<small title="${escapeHtml(item.error)}">查無行情</small>` : ""}</span><span>${formatReturn(item.benchmarkReturn)}</span><strong class="rs-value ${relativeClass}">${Number.isFinite(item.rsRatio) ? item.rsRatio.toFixed(2) : "—"}</strong><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
+    ? `<div class="strength-row strength-head"><span>排名／ETF</span><span>RS20 軌跡（現／3／5／10／20日前）</span><span>20日報酬</span><span>趨勢評級</span><span></span></div>${items.map((item, index) => {
+        const formatReturn = value => Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "—",
+          rsTrack = [0, 3, 5, 10, 20].map(offset => Number.isFinite(item.rsTimeline?.[offset]) ? item.rsTimeline[offset].toFixed(2) : "—").join("／"),
+          leveragedNote = item.leverage > 1 ? `<small>已做 ${item.leverage}x 槓桿校正</small>` : "";
+        return `<div class="strength-row"><span><b>${index + 1}</b><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}${item.leverage > 1 ? ` · ${item.leverage}x` : ""}</small></span><span class="rs-track"><strong>${rsTrack}</strong>${leveragedNote}</span><span class="strength-return"><strong class="${Number(item.return20D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return20D)}</strong>${item.error ? `<small title="${escapeHtml(item.error)}">查無行情</small>` : ""}</span><span class="strength-rating rating-${item.rating.key.toLowerCase()}"><strong>${escapeHtml(item.rating.label)}</strong><small>${escapeHtml(item.rating.detail)}</small></span><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
       }).join("")}`
     : `<p class="note">目前沒有 ETF，請先同步或手動新增。</p>`;
 }
@@ -2002,16 +2025,29 @@ async function refreshStrengthUniverse({ quiet = false } = {}) {
     $("strengthStatus").textContent = `已從 ${payload.sheet || "Google Sheet"} 載入 ${universe.length} 檔，正在計算最近 20 個交易日…`;
     const returns = await fetchTwentyDayReturns(universe.map(item => item.symbol)),
       bySymbol = new Map(returns.map(item => [item.symbol, item])),
-      benchmarkReturn = finiteOrNull(bySymbol.get("0050")?.return20D);
+      benchmark = bySymbol.get("0050") || {},
+      benchmarkReturn = finiteOrNull(benchmark.return20D),
+      benchmarkOffsets = benchmark.return20DOffsets || {};
     strengthBenchmarkReturn = benchmarkReturn;
     strengthUniverse = universe.map(item => {
-      const performance = bySymbol.get(item.symbol) || {};
+      const performance = bySymbol.get(item.symbol) || {},
+        meta = window.BuyEngineV2.ETF_MASTER[item.symbol] || {},
+        leverage = meta.leveraged || /L$/.test(item.symbol) ? 2 : 1,
+        returnsByOffset = performance.return20DOffsets || {},
+        rsTimeline = Object.fromEntries([0, 3, 5, 10, 20].map(offset => {
+          const adjusted = calculateLeverageAdjustedReturn(returnsByOffset[offset], leverage);
+          return [offset, calculateRsRatio(adjusted, benchmarkOffsets[offset])];
+        })),
+        rating = classifyRs20Trend(rsTimeline);
       return {
         ...item,
         name: item.name || performance.name || ETF_NAME_BY_SYMBOL[item.symbol] || "",
         return20D: finiteOrNull(performance.return20D),
         benchmarkReturn,
-        rsRatio: calculateRsRatio(performance.return20D, benchmarkReturn),
+        leverage,
+        rsTimeline,
+        rsRatio: rsTimeline[0],
+        rating,
         latestDate: performance.latestDate || "",
         error: performance.error || "",
       };
@@ -5138,6 +5174,14 @@ function runSelfTests() {
     normalizeEtfUniverseSymbol("921") === "00921" &&
     normalizeEtfUniverseSymbol("50") === "0050",
   );
+  test("RS20 趨勢評級符合轉折、連跌與低於100規則", () =>
+    classifyRs20Trend({ 0: 101, 3: 103, 5: 102, 10: 101, 20: 99 }).key === "WATCH" &&
+    classifyRs20Trend({ 0: 101, 3: 102, 5: 103, 10: 104, 20: 105 }).key === "REDUCE" &&
+    classifyRs20Trend({ 0: 99, 3: 101, 5: 102, 10: 103, 20: 104 }).key === "ROTATE",
+  );
+  test("2倍槓桿報酬會還原單位曝險", () =>
+    Math.abs(calculateLeverageAdjustedReturn(21, 2) - 10) < 0.001,
+  );
   const v2 = window.BuyEngineV2.runBuyEngineSelfTests();
   v2.tests.forEach((x) => tests.push([`BUY V2 · ${x.name}`, x.ok]));
   const passed = tests.filter((t) => t[1]).length,
@@ -5358,6 +5402,8 @@ window.ARKStrategyLab = {
   renderExtremeMode,
   renderDecisionExplanation,
   calculateRsRatio,
+  calculateLeverageAdjustedReturn,
+  classifyRs20Trend,
   refreshStrengthUniverse,
   LocalDataProvider,
   GoogleSheetsDataProvider,

@@ -71,7 +71,7 @@ function getSecurityReturns_(event) {
   const symbols = [...new Set(raw.toUpperCase().split(',').map(value => value.replace(/[^0-9A-Z]/g, '')).filter(value => /^\d{4,6}[A-Z]?$/.test(value)))].slice(0, 40);
   if (!symbols.length) return { ok: true, source: 'Yahoo Finance adjusted close', items: [] };
   const cache = CacheService.getScriptCache();
-  const cacheVersion = 'v5';
+  const cacheVersion = 'v6';
   const items = [], missing = [];
   symbols.forEach(symbol => {
     const cached = cache.get(`return_${cacheVersion}_${symbol}`);
@@ -164,15 +164,25 @@ function calculateReturnsFromYahoo_(symbol, body) {
   const threeYearBase = atOrBefore(threeYearStart);
   const dividendsAfter = base => base ? dividendEvents.filter(event => event.timestamp > base.timestamp && event.timestamp <= latest.timestamp).reduce((sum, event) => sum + event.amount / splitFactorAfter(event.timestamp), 0) : 0;
   const pct = base => base ? Math.round(((latest.value + (hasRelevantSplit ? dividendsAfter(base) : 0)) / base.value - 1) * 10000) / 100 : null;
+  const windowReturn = offset => {
+    const endIndex = points.length - 1 - offset, baseIndex = endIndex - 20;
+    if (baseIndex < 0) return null;
+    const end = points[endIndex], base = points[baseIndex];
+    const windowDividends = hasRelevantSplit ? dividendEvents.filter(event => event.timestamp > base.timestamp && event.timestamp <= end.timestamp).reduce((sum, event) => sum + event.amount / splitFactorAfter(event.timestamp), 0) : 0;
+    return Math.round(((end.value + windowDividends) / base.value - 1) * 10000) / 100;
+  };
   const twentyTradingDayBase = points.length >= 21 ? points[points.length - 21] : null;
+  const return20DOffsets = {};
+  [0, 3, 5, 10, 20].forEach(offset => { return20DOffsets[offset] = windowReturn(offset); });
   const threeYear = pct(threeYearBase);
   const threeYearAnnualized = threeYear === null ? null : Math.round((Math.pow(1 + threeYear / 100, 1 / 3) - 1) * 10000) / 100;
   return {
     symbol,
     latestDate: Utilities.formatDate(latestDate, 'Asia/Taipei', 'yyyy-MM-dd'),
     latestPrice: Math.round((latest.rawClose > 0 ? latest.rawClose : latest.value) * 100) / 100,
-    return20D: pct(twentyTradingDayBase),
+    return20D: return20DOffsets[0],
     return20DStart: twentyTradingDayBase ? Utilities.formatDate(new Date(twentyTradingDayBase.timestamp * 1000), 'Asia/Taipei', 'yyyy-MM-dd') : null,
+    return20DOffsets,
     ytd: pct(ytdBase),
     oneYear: pct(oneYearBase),
     threeYear,
