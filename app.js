@@ -1967,55 +1967,19 @@ function calculateDailyRs20(etfSeries = [], benchmarkSeries = [], leverage = 1) 
   }
   return result;
 }
-function calculateLeverageAdjustedPeriodReturn(series = [], leverage = 1, days = 20) {
-  const points = (series || []).filter(point => Number(point.value) > 0).slice(-(days + 1)),
-    multiple = Math.max(1, Number(leverage) || 1);
-  if (points.length < days + 1) return null;
-  let index = 1;
-  for (let position = 1; position < points.length; position++) {
-    const dailyReturn = Number(points[position].value) / Number(points[position - 1].value) - 1;
-    index *= Math.max(0.0001, 1 + dailyReturn / multiple);
-  }
-  return round((index - 1) * 100, 4);
-}
-function rsSlope(points, length, endOffset = 0) {
-  const values = points.slice(0, Math.max(0, points.length - endOffset)).slice(-length).map(point => Number(point.value));
-  if (values.length < length) return null;
-  const meanX = (values.length - 1) / 2, meanY = values.reduce((sum, value) => sum + value, 0) / values.length;
-  let numerator = 0, denominator = 0;
-  values.forEach((value, index) => { numerator += (index - meanX) * (value - meanY); denominator += (index - meanX) ** 2; });
-  return denominator ? round(numerator / denominator, 4) : 0;
-}
-function rsAverage(points, length, endOffset = 0) {
-  const values = points.slice(0, Math.max(0, points.length - endOffset)).slice(-length).map(point => Number(point.value));
-  return values.length === length ? round(values.reduce((sum, value) => sum + value, 0) / length, 4) : null;
-}
-function analyzeRs20Trend(points = [], context = {}) {
-  const current = finiteOrNull(points.at(-1)?.value), ma3 = rsAverage(points, 3), ma8 = rsAverage(points, 8),
-    previousMa3 = rsAverage(points, 3, 1), previousMa8 = rsAverage(points, 8, 1),
-    slope5 = rsSlope(points, 5), slope10 = rsSlope(points, 10), previousSlope5 = rsSlope(points, 5, 1),
-    recent = points.slice(-20).map(point => Number(point.value)).filter(Number.isFinite),
-    highest = recent.length ? Math.max(...recent) : null, gap = current !== null && highest !== null ? round(highest - current, 2) : null,
-    last3 = points.slice(-3).map(point => Number(point.value)), below100 = last3.length === 3 && last3.every(value => value < 100),
-    last5 = points.slice(-5).map(point => Number(point.value)), below98FiveDays = last5.length === 5 && last5.every(value => value < 98),
-    consecutiveBelow100 = [...points].reverse().findIndex(point => Number(point.value) >= 100),
-    crossedDown = ma3 !== null && ma8 !== null && previousMa3 !== null && previousMa8 !== null && ma3 < ma8 && previousMa3 >= previousMa8,
-    slopeTurnedDown = slope5 !== null && previousSlope5 !== null && slope5 < 0 && previousSlope5 >= 0,
-    benchmarkReturn = finiteOrNull(context.benchmarkReturn), etfReturn = finiteOrNull(context.etfAdjustedReturn),
-    relativeLag = benchmarkReturn !== null && etfReturn !== null ? round(benchmarkReturn - etfReturn, 2) : null;
-  const below100Days = consecutiveBelow100 === -1 ? points.length : consecutiveBelow100,
-    metrics = { current, ma3, ma8, slope5, slope10, highest, gap, below100, below98FiveDays, below100Days, crossedDown, slopeTurnedDown, benchmarkReturn, etfReturn, relativeLag };
-  if ([current, ma3, ma8, slope5, slope10].some(value => value === null))
-    return { ...metrics, key: "INSUFFICIENT", label: "資料不足", detail: "尚無完整每日 RS20 曲線" };
-  if (below98FiveDays && relativeLag !== null && relativeLag >= 3)
-    return { ...metrics, key: "ROTATE", label: "轉換標的", detail: `衛星退出：連續5日低於98，且20日落後0050 ${relativeLag.toFixed(2)}點` };
-  if (current > 100 && slope10 > 0)
-    return { ...metrics, key: "STRONG", label: "持續轉強", detail: "保留／加碼衛星ETF：RS20高於100且10日斜率為正" };
-  if (below100 && slope10 < 0)
-    return { ...metrics, key: "WEAK", label: "相對弱勢", detail: `分批轉回0050：連續${below100Days}日低於100，且10日斜率為負` };
-  if ((current >= 98 && current <= 100) || (current < 100 && below100Days < 3))
-    return { ...metrics, key: "WATCH", label: "觀察", detail: `暫不動作：RS20 ${current.toFixed(2)}，連續低於100共${below100Days}日` };
-  return { ...metrics, key: "WATCH", label: "觀察", detail: "暫不動作：相對趨勢尚未形成明確轉換訊號" };
+function analyzeRs20Trend(points = []) {
+  const current = finiteOrNull(points.at(-1)?.value),
+    fiveDaysAgo = finiteOrNull(points.at(-6)?.value),
+    change5D = current !== null && fiveDaysAgo !== null ? round(current - fiveDaysAgo, 2) : null,
+    excessPerformance = current !== null ? round(current - 100, 2) : null,
+    metrics = { current, change5D, excessPerformance };
+  if (current === null)
+    return { ...metrics, key: "INSUFFICIENT", label: "資料不足", detail: "尚無可用RS20" };
+  if (current < 95)
+    return { ...metrics, key: "ROTATE", label: "轉換標的", detail: `衛星落後0050 ${Math.abs(excessPerformance).toFixed(2)}%，轉回0050或更強標的` };
+  if (current > 105)
+    return { ...metrics, key: "STRONG", label: "持續領先", detail: `衛星超越0050 ${excessPerformance.toFixed(2)}%，保留衛星ETF` };
+  return { ...metrics, key: "WATCH", label: "觀察", detail: `RS20位於95～105觀察區，暫不調整` };
 }
 async function fetchTwentyDayReturns(symbols) {
   const unique = [...new Set(["0050", ...symbols])], results = [];
@@ -2033,21 +1997,21 @@ async function fetchTwentyDayReturns(symbols) {
 }
 function renderStrengthTable(items = strengthUniverse) {
   const valid = items.filter(item => Number.isFinite(item.rsRatio)),
-    stronger = valid.filter(item => item.rsRatio > 100).length,
-    weaker = valid.filter(item => item.rsRatio < 100).length,
-    benchmarkReturn = Number(strengthBenchmarkReturn);
+    stronger = valid.filter(item => item.rsRatio > 105).length,
+    watching = valid.filter(item => item.rsRatio >= 95 && item.rsRatio <= 105).length,
+    rotating = valid.filter(item => item.rsRatio < 95).length;
   $("strengthCount").textContent = `${items.length} 檔`;
   $("strengthSummary").innerHTML = items.length
-    ? `<div><span>跑贏 0050</span><strong class="positive">${stronger} 檔</strong></div><div><span>落後 0050</span><strong class="negative">${weaker} 檔</strong></div><div><span>0050 20日報酬</span><strong>${Number.isFinite(benchmarkReturn) ? `${benchmarkReturn >= 0 ? "+" : ""}${benchmarkReturn.toFixed(2)}%` : "—"}</strong></div>`
+    ? `<div><span>持續領先 RS&gt;105</span><strong class="positive">${stronger} 檔</strong></div><div><span>觀察區 95～105</span><strong>${watching} 檔</strong></div><div><span>轉換標的 RS&lt;95</span><strong class="negative">${rotating} 檔</strong></div>`
     : "";
   $("strengthTable").innerHTML = items.length
-    ? `<div class="strength-row strength-head"><span>排名／ETF</span><span>每日 RS20 趨勢指標</span><span>20日報酬</span><span>趨勢評級</span><span></span></div>${items.map((item, index) => {
+    ? `<div class="strength-row strength-head"><span>排名／ETF</span><span>RS Ratio</span><span>相對0050</span><span>20日報酬</span><span>評級／動作</span><span></span></div>${items.map((item, index) => {
         const formatReturn = value => Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "—",
           metric = item.rating,
-          rsTrack = `RS ${Number.isFinite(metric.current) ? metric.current.toFixed(2) : "—"} · MA3 ${Number.isFinite(metric.ma3) ? metric.ma3.toFixed(2) : "—"} · MA8 ${Number.isFinite(metric.ma8) ? metric.ma8.toFixed(2) : "—"}`,
-          slopes = `斜率5 ${Number.isFinite(metric.slope5) ? metric.slope5.toFixed(3) : "—"} · 斜率10 ${Number.isFinite(metric.slope10) ? metric.slope10.toFixed(3) : "—"}`,
+          rsClass = metric.current > 105 ? "positive" : metric.current < 95 ? "negative" : "neutral-value",
+          direction = Number.isFinite(metric.change5D) ? `近5日 ${metric.change5D >= 0 ? "+" : ""}${metric.change5D.toFixed(2)}` : "近5日 —",
           leveragedNote = item.leverage > 1 ? `<small>已做 ${item.leverage}x 槓桿校正</small>` : "";
-        return `<div class="strength-row"><span><b>${index + 1}</b><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}${item.leverage > 1 ? ` · ${item.leverage}x` : ""}</small></span><span class="rs-track"><strong>${rsTrack}</strong><small>${slopes}</small>${leveragedNote}</span><span class="strength-return"><strong class="${Number(item.return20D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return20D)}</strong>${item.error ? `<small title="${escapeHtml(item.error)}">查無行情</small>` : ""}</span><span class="strength-rating rating-${item.rating.key.toLowerCase()}"><strong>${escapeHtml(item.rating.label)}</strong><small>${escapeHtml(item.rating.detail)}</small></span><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
+        return `<div class="strength-row"><span class="strength-identity"><b>${index + 1}</b><span><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}${item.leverage > 1 ? ` · ${item.leverage}x` : ""}</small></span></span><span class="rs-focus"><strong class="${rsClass}">${Number.isFinite(metric.current) ? metric.current.toFixed(2) : "—"}</strong><small>${direction}</small>${leveragedNote}</span><strong class="rs-excess ${Number(metric.excessPerformance) >= 0 ? "positive" : "negative"}">${formatReturn(metric.excessPerformance)}</strong><span class="strength-return"><strong class="${Number(item.return20D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return20D)}</strong>${item.error ? `<small title="${escapeHtml(item.error)}">查無行情</small>` : ""}</span><span class="strength-rating rating-${item.rating.key.toLowerCase()}"><strong>${escapeHtml(item.rating.label)}</strong><small>${escapeHtml(item.rating.detail)}</small></span><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
       }).join("")}`
     : `<p class="note">目前沒有 ETF，請先同步或手動新增。</p>`;
 }
@@ -2081,18 +2045,13 @@ async function refreshStrengthUniverse({ quiet = false } = {}) {
         meta = window.BuyEngineV2.ETF_MASTER[item.symbol] || {},
         leverage = meta.leveraged || /L$/.test(item.symbol) ? 2 : 1,
         rsSeries = calculateDailyRs20(performance.recentSeries, benchmark.recentSeries, leverage),
-        adjustedReturn20D = calculateLeverageAdjustedPeriodReturn(performance.recentSeries, leverage),
-        rating = analyzeRs20Trend(rsSeries, {
-          benchmarkReturn,
-          etfAdjustedReturn: adjustedReturn20D,
-        });
+        rating = analyzeRs20Trend(rsSeries);
       return {
         ...item,
         name: item.name || performance.name || ETF_NAME_BY_SYMBOL[item.symbol] || "",
         return20D: finiteOrNull(performance.return20D),
         benchmarkReturn,
         leverage,
-        adjustedReturn20D,
         rsSeries,
         rsRatio: rating.current,
         rating,
@@ -5222,19 +5181,14 @@ function runSelfTests() {
     normalizeEtfUniverseSymbol("921") === "00921" &&
     normalizeEtfUniverseSymbol("50") === "0050",
   );
-  test("核心衛星 RS20 評級符合保留、觀察、分批與完成轉換", () => {
+  test("核心衛星 RS20 評級只依95與105門檻", () => {
     const points = values => values.map((value, index) => ({ date: String(index), value }));
     return (
-      analyzeRs20Trend(points([99,99.5,100,100.5,101,101.5,102,102.5,103,103.5])).key === "STRONG" &&
-      analyzeRs20Trend(points([101,101,101,101,101,101,101,101,101,99.5])).key === "WATCH" &&
-      analyzeRs20Trend(points([103,102.5,102,101.5,101,100.5,100,99.8,99.5,99.2])).key === "WEAK" &&
-      analyzeRs20Trend(points([104,103,102,101,100,99,98.5,97.9,97.5,97,96.8,96.5]), { benchmarkReturn: -2, etfAdjustedReturn: -6 }).key === "ROTATE"
+      analyzeRs20Trend(points([100,101,103,104,105,106])).key === "STRONG" &&
+      analyzeRs20Trend(points([110,108,105,103,101,99])).key === "WATCH" &&
+      analyzeRs20Trend(points([100,99,98,97,96,94.99])).key === "ROTATE" &&
+      analyzeRs20Trend(points([100,100,100,100,100,105])).key === "WATCH"
     );
-  });
-  test("不論大盤漲跌皆只依衛星相對績效評級", () => {
-    const points = values => values.map((value, index) => ({ date: String(index), value }));
-    const fallingMarket = analyzeRs20Trend(points([103,102.8,102.6,102.4,102.2,102,101.8,101.6,100.5,99.8,99.5]), { benchmarkReturn: -6, etfAdjustedReturn: -7 });
-    return fallingMarket.key === "WEAK";
   });
   test("2倍ETF會先逐日除以槓桿再建立RS20", () => {
     const benchmark = [], etf = [];
@@ -5467,7 +5421,6 @@ window.ARKStrategyLab = {
   renderDecisionExplanation,
   calculateRsRatio,
   calculateDailyRs20,
-  calculateLeverageAdjustedPeriodReturn,
   analyzeRs20Trend,
   refreshStrengthUniverse,
   LocalDataProvider,
