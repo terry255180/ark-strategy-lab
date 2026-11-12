@@ -1949,7 +1949,7 @@ function calculateRsRatio(etfReturn, benchmarkReturn) {
     return null;
   return round(((1 + etf / 100) / (1 + benchmark / 100)) * 100, 2);
 }
-async function fetchSevenDayReturns(symbols) {
+async function fetchTwentyDayReturns(symbols) {
   const unique = [...new Set(["0050", ...symbols])], results = [];
   for (let index = 0; index < unique.length; index += 35) {
     const batch = unique.slice(index, index + 35),
@@ -1970,13 +1970,13 @@ function renderStrengthTable(items = strengthUniverse) {
     benchmarkReturn = Number(strengthBenchmarkReturn);
   $("strengthCount").textContent = `${items.length} 檔`;
   $("strengthSummary").innerHTML = items.length
-    ? `<div><span>跑贏 0050</span><strong class="positive">${stronger} 檔</strong></div><div><span>落後 0050</span><strong class="negative">${weaker} 檔</strong></div><div><span>0050 七日報酬</span><strong>${Number.isFinite(benchmarkReturn) ? `${benchmarkReturn >= 0 ? "+" : ""}${benchmarkReturn.toFixed(2)}%` : "—"}</strong></div>`
+    ? `<div><span>跑贏 0050</span><strong class="positive">${stronger} 檔</strong></div><div><span>落後 0050</span><strong class="negative">${weaker} 檔</strong></div><div><span>0050 20日報酬</span><strong>${Number.isFinite(benchmarkReturn) ? `${benchmarkReturn >= 0 ? "+" : ""}${benchmarkReturn.toFixed(2)}%` : "—"}</strong></div>`
     : "";
   $("strengthTable").innerHTML = items.length
-    ? `<div class="strength-row strength-head"><span>排名／ETF</span><span>7日報酬</span><span>0050</span><span>RS Ratio</span><span></span></div>${items.map((item, index) => {
+    ? `<div class="strength-row strength-head"><span>排名／ETF</span><span>20日報酬</span><span>0050</span><span>RS Ratio</span><span></span></div>${items.map((item, index) => {
         const relativeClass = item.rsRatio > 100 ? "positive" : item.rsRatio < 100 ? "negative" : "neutral-value",
           formatReturn = value => Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "—";
-        return `<div class="strength-row"><span><b>${index + 1}</b><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}</small></span><span class="strength-return"><strong class="${Number(item.return7D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return7D)}</strong>${item.error ? `<small title="${escapeHtml(item.error)}">查無行情</small>` : ""}</span><span>${formatReturn(item.benchmarkReturn)}</span><strong class="rs-value ${relativeClass}">${Number.isFinite(item.rsRatio) ? item.rsRatio.toFixed(2) : "—"}</strong><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
+        return `<div class="strength-row"><span><b>${index + 1}</b><strong>${escapeHtml(item.name || ETF_NAME_BY_SYMBOL[item.symbol] || "ETF")}</strong><small>${escapeHtml(item.symbol)}</small></span><span class="strength-return"><strong class="${Number(item.return20D) >= 0 ? "positive" : "negative"}">${formatReturn(item.return20D)}</strong>${item.error ? `<small title="${escapeHtml(item.error)}">查無行情</small>` : ""}</span><span>${formatReturn(item.benchmarkReturn)}</span><strong class="rs-value ${relativeClass}">${Number.isFinite(item.rsRatio) ? item.rsRatio.toFixed(2) : "—"}</strong><button type="button" class="remove-strength" data-strength-remove="${escapeHtml(item.symbol)}" aria-label="刪除 ${escapeHtml(item.symbol)}">×</button></div>`;
       }).join("")}`
     : `<p class="note">目前沒有 ETF，請先同步或手動新增。</p>`;
 }
@@ -1999,26 +1999,26 @@ async function refreshStrengthUniverse({ quiet = false } = {}) {
       });
     });
     const universe = [...universeMap.values()];
-    $("strengthStatus").textContent = `已從 ${payload.sheet || "Google Sheet"} 載入 ${universe.length} 檔，正在計算最近 7 個交易日…`;
-    const returns = await fetchSevenDayReturns(universe.map(item => item.symbol)),
+    $("strengthStatus").textContent = `已從 ${payload.sheet || "Google Sheet"} 載入 ${universe.length} 檔，正在計算最近 20 個交易日…`;
+    const returns = await fetchTwentyDayReturns(universe.map(item => item.symbol)),
       bySymbol = new Map(returns.map(item => [item.symbol, item])),
-      benchmarkReturn = finiteOrNull(bySymbol.get("0050")?.return7D);
+      benchmarkReturn = finiteOrNull(bySymbol.get("0050")?.return20D);
     strengthBenchmarkReturn = benchmarkReturn;
     strengthUniverse = universe.map(item => {
       const performance = bySymbol.get(item.symbol) || {};
       return {
         ...item,
         name: item.name || performance.name || ETF_NAME_BY_SYMBOL[item.symbol] || "",
-        return7D: finiteOrNull(performance.return7D),
+        return20D: finiteOrNull(performance.return20D),
         benchmarkReturn,
-        rsRatio: calculateRsRatio(performance.return7D, benchmarkReturn),
+        rsRatio: calculateRsRatio(performance.return20D, benchmarkReturn),
         latestDate: performance.latestDate || "",
         error: performance.error || "",
       };
     }).sort((a, b) => (b.rsRatio ?? -Infinity) - (a.rsRatio ?? -Infinity));
     renderStrengthTable();
     const available = strengthUniverse.filter(item => Number.isFinite(item.rsRatio)).length;
-    $("strengthStatus").textContent = `完成：${available}／${strengthUniverse.length} 檔已有 7 日行情；基準日 ${bySymbol.get("0050")?.latestDate || "—"}。`;
+    $("strengthStatus").textContent = `完成：${available}／${strengthUniverse.length} 檔已有 20 日行情；基準日 ${bySymbol.get("0050")?.latestDate || "—"}。`;
   } catch (error) {
     $("strengthStatus").textContent = `無法載入動態清單：${String(error?.message || error)}。若顯示「不支援的操作」，請重新部署最新版 Apps Script。`;
   } finally {
